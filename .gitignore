@@ -1,0 +1,4 @@
+__pycache__/
+artifacts/
+manual_rois/
+*.pyc
