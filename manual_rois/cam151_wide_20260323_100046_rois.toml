@@ -1,0 +1,84 @@
+image_name = "cam151_wide_20260323_100046.jpg"
+updated_at = "2026-03-24T10:57:58"
+overview_path = "cam151_wide_20260323_100046/roi_overview.jpg"
+
+[[rois]]
+id = "roi_01"
+xyxy = [882, 98, 1111, 313]
+crop_path = "cam151_wide_20260323_100046/roi_01.jpg"
+note = "upper context"
+
+[[rois]]
+id = "roi_02"
+xyxy = [789, 1484, 1263, 1536]
+crop_path = "cam151_wide_20260323_100046/roi_02.jpg"
+note = "lower context"
+
+[[points]]
+id = "point_01"
+kind = "tube_top"
+label = "top_01"
+x = 959
+y = 141
+roi_id = "roi_01"
+note = "upper left post tip"
+
+[[points]]
+id = "point_02"
+kind = "tube_top"
+label = "top_02"
+x = 1050
+y = 137
+roi_id = "roi_01"
+note = "upper right post tip"
+
+[[points]]
+id = "point_03"
+kind = "mark"
+label = "mark_01"
+x = 817
+y = 1521
+roi_id = "roi_02"
+note = "lower left orange mark"
+
+[[points]]
+id = "point_04"
+kind = "mark"
+label = "mark_02"
+x = 1028
+y = 1521
+roi_id = "roi_02"
+note = "lower right orange mark"
+
+[[lines]]
+id = "line_01"
+kind = "horizontal_ref"
+label = "top_ref"
+x1 = 926
+y1 = 230
+x2 = 1047
+y2 = 220
+roi_id = "roi_01"
+note = ""
+
+[[lines]]
+id = "line_02"
+kind = "horizontal_ref"
+label = "bottom_horrizontal"
+x1 = 780
+y1 = 1506
+x2 = 1127
+y2 = 1510
+roi_id = "roi_02"
+note = ""
+
+[[lines]]
+id = "line_03"
+kind = "horizontal_ref"
+label = "vertical reftube"
+x1 = 952
+y1 = 186
+x2 = 894
+y2 = 763
+roi_id = "roi_01"
+note = ""
