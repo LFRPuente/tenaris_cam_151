@@ -60,6 +60,8 @@ def _normalize_padding(warp_padding: dict | None) -> dict[str, int]:
 
 def _apply_default_padding(padding: dict[str, int], base_width: int, base_height: int) -> dict[str, int]:
     resolved = dict(padding)
+    if resolved.get("left", 0) <= 0:
+        resolved["left"] = max(24, int(round(0.06 * float(base_width))))
     if resolved.get("right", 0) <= 0:
         resolved["right"] = max(140, int(round(0.55 * float(base_width))))
     if resolved.get("top", 0) <= 0:
@@ -113,6 +115,10 @@ def _line_avg_y(line: dict) -> float:
     return (float(line["y1"]) + float(line["y2"])) / 2.0
 
 
+def _line_avg_x(line: dict) -> float:
+    return (float(line["x1"]) + float(line["x2"])) / 2.0
+
+
 def _sorted_endpoints(line: dict) -> tuple[tuple[float, float], tuple[float, float]]:
     p1 = (float(line["x1"]), float(line["y1"]))
     p2 = (float(line["x2"]), float(line["y2"]))
@@ -137,6 +143,12 @@ def _pick_horizontal_refs(lines: Iterable[dict]) -> tuple[dict, dict]:
 
     horizontal_refs.sort(key=_line_avg_y)
     return horizontal_refs[0], horizontal_refs[-1]
+
+
+def _pick_vertical_refs(lines: Iterable[dict]) -> list[dict]:
+    vertical_refs = [_normalize_line(line) for line in lines if str(line.get("kind")) == "vertical_ref"]
+    vertical_refs.sort(key=_line_avg_x)
+    return vertical_refs
 
 
 def _find_line_by_labels(lines: list[dict], *labels: str) -> dict | None:
@@ -175,7 +187,28 @@ def _translate_line_through_point(
     return (anchor, (ax + dx, ay + dy))
 
 
-def _has_parallel_guide_refs(points: list[dict], lines: list[dict]) -> bool:
+def _line_x_at_y(
+    line: tuple[tuple[float, float], tuple[float, float]],
+    y_value: float,
+) -> float:
+    (x0, y0), (x1, y1) = line
+    if abs(y1 - y0) < 1e-8:
+        return float(0.5 * (x0 + x1))
+    t = (float(y_value) - y0) / (y1 - y0)
+    return float(x0 + t * (x1 - x0))
+
+
+def _has_secondary_parallel_guide_refs(points: list[dict], lines: list[dict]) -> bool:
+    needed_points = {"top_03", "top_04", "mark_05", "mark_06"}
+    present_points = {_label_key(point.get("label")) for point in points}
+    if not needed_points.issubset(present_points):
+        return False
+
+    line_labels = {_label_key(line.get("label")) for line in lines}
+    return "top_ref" in line_labels and ("bottom_horrizontal" in line_labels or "bottom_horizontal" in line_labels)
+
+
+def _has_primary_parallel_guide_refs(points: list[dict], lines: list[dict]) -> bool:
     needed_points = {"top_01", "top_02", "mark_01", "mark_02"}
     present_points = {_label_key(point.get("label")) for point in points}
     if not needed_points.issubset(present_points):
@@ -183,6 +216,61 @@ def _has_parallel_guide_refs(points: list[dict], lines: list[dict]) -> bool:
 
     line_labels = {_label_key(line.get("label")) for line in lines}
     return "top_ref" in line_labels and ("bottom_horrizontal" in line_labels or "bottom_horizontal" in line_labels)
+
+
+def _select_vertical_side_guides(
+    lines: list[dict],
+    left_seed: tuple[tuple[float, float], tuple[float, float]],
+    right_seed: tuple[tuple[float, float], tuple[float, float]],
+    y_probe: float,
+) -> tuple[
+    tuple[tuple[float, float], tuple[float, float]],
+    tuple[tuple[float, float], tuple[float, float]],
+    list[str],
+    list[tuple[str, tuple[float, float], tuple[float, float]]],
+] | None:
+    vertical_refs = _pick_vertical_refs(lines)
+    if len(vertical_refs) < 2:
+        return None
+
+    left_seed_x = _line_x_at_y(left_seed, y_probe)
+    right_seed_x = _line_x_at_y(right_seed, y_probe)
+    candidates: list[tuple[float, float, dict]] = []
+    for line in vertical_refs:
+        line_pts = _sorted_endpoints(line)
+        x_val = _line_x_at_y(line_pts, y_probe)
+        candidates.append((x_val, abs(x_val - left_seed_x), line))
+
+    left_idx = int(np.argmin(np.asarray([item[1] for item in candidates], np.float32)))
+    left_line = candidates[left_idx][2]
+    left_pts = _sorted_endpoints(left_line)
+    left_x = candidates[left_idx][0]
+
+    right_candidates: list[tuple[float, float, dict]] = []
+    for idx, (_, _, line) in enumerate(candidates):
+        if idx == left_idx:
+            continue
+        line_pts = _sorted_endpoints(line)
+        x_val = _line_x_at_y(line_pts, y_probe)
+        right_candidates.append((x_val, abs(x_val - right_seed_x), line))
+    if not right_candidates:
+        return None
+
+    right_idx = int(np.argmin(np.asarray([item[1] for item in right_candidates], np.float32)))
+    right_line = right_candidates[right_idx][2]
+    right_pts = _sorted_endpoints(right_line)
+    right_x = right_candidates[right_idx][0]
+
+    if left_x > right_x:
+        left_line, right_line = right_line, left_line
+        left_pts, right_pts = right_pts, left_pts
+
+    debug_lines = [
+        (_label_for(left_line, "vertical_ref_left"), left_pts[0], left_pts[1]),
+        (_label_for(right_line, "vertical_ref_right"), right_pts[0], right_pts[1]),
+    ]
+    labels = [_label_for(left_line, "vertical_ref_left"), _label_for(right_line, "vertical_ref_right")]
+    return left_pts, right_pts, labels, debug_lines
 
 
 def _line_coeffs(p1: tuple[float, float], p2: tuple[float, float]) -> tuple[float, float, float]:
@@ -323,6 +411,65 @@ def _build_from_parallel_guides(
     return src_points, labels, debug
 
 
+def _build_from_secondary_parallel_guides(
+    points: list[dict],
+    lines: list[dict],
+) -> tuple[list[tuple[float, float]], list[str], dict]:
+    top_left_point = _find_point_by_label(points, "top_03")
+    top_right_point = _find_point_by_label(points, "top_04")
+    mark_left_point = _find_point_by_label(points, "mark_06")
+    mark_right_point = _find_point_by_label(points, "mark_05")
+    top_line = _find_line_by_labels(lines, "top_ref")
+    bottom_line = _find_line_by_labels(lines, "bottom_horrizontal", "bottom_horizontal")
+
+    if not all([top_left_point, top_right_point, mark_left_point, mark_right_point, top_line, bottom_line]):
+        raise ValueError("Faltan referencias etiquetadas: top_03, top_04, mark_06, mark_05, top_ref y bottom_horrizontal.")
+
+    top_ref = _sorted_endpoints(top_line)
+    bottom_ref = _sorted_endpoints(bottom_line)
+    left_seed = (_point_xy(top_left_point), _point_xy(mark_left_point))
+    right_seed = (_point_xy(top_right_point), _point_xy(mark_right_point))
+
+    y_probe = 0.5 * (_line_avg_y(top_line) + _line_avg_y(bottom_line))
+    side_labels = ["top_03->mark_06", "top_04->mark_05"]
+    picked = _select_vertical_side_guides(lines, left_seed, right_seed, y_probe)
+    if picked is not None:
+        left_side, right_side, side_labels, _ = picked
+    else:
+        left_side = left_seed
+        right_side = right_seed
+
+    top_left = _intersect_lines(left_side, top_ref)
+    bottom_left = _intersect_lines(left_side, bottom_ref)
+    top_right = _intersect_lines(right_side, top_ref)
+    bottom_right = _intersect_lines(right_side, bottom_ref)
+
+    src_points = [top_left, top_right, bottom_left, bottom_right]
+    _validate_quad(src_points)
+
+    anchor_points = [
+        ("top_03", _point_xy(top_left_point)),
+        ("top_04", _point_xy(top_right_point)),
+        ("mark_06", _point_xy(mark_left_point)),
+        ("mark_05", _point_xy(mark_right_point)),
+    ]
+
+    debug = {
+        "top_ref": top_ref,
+        "bottom_ref": bottom_ref,
+        "left_side": left_side,
+        "right_side": right_side,
+        "anchor_points": anchor_points,
+    }
+    labels = [
+        _label_for(top_line, "top_ref"),
+        _label_for(bottom_line, "bottom_horrizontal"),
+        side_labels[0],
+        side_labels[1],
+    ]
+    return src_points, labels, debug
+
+
 def _build_from_horizontal_lines(lines: list[dict]) -> tuple[list[tuple[float, float]], list[str], dict]:
     top_line, bottom_line = _pick_horizontal_refs(lines)
     top_left, top_right = _sorted_endpoints(top_line)
@@ -364,7 +511,9 @@ def build_homography_preview(
     override_points = _normalize_src_points_override(src_points_override)
     override_rect = _normalize_dst_rect_override(dst_rect_override)
 
-    if _has_parallel_guide_refs(normalized_points, normalized_lines):
+    if _has_secondary_parallel_guide_refs(normalized_points, normalized_lines):
+        computed_src_points, used_labels, debug = _build_from_secondary_parallel_guides(normalized_points, normalized_lines)
+    elif _has_primary_parallel_guide_refs(normalized_points, normalized_lines):
         computed_src_points, used_labels, debug = _build_from_parallel_guides(normalized_points, normalized_lines)
     else:
         computed_src_points, used_labels, debug = _build_from_horizontal_lines(normalized_lines)

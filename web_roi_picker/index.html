@@ -108,6 +108,7 @@
               <label class="label" for="lineKindSelect">Tipo de linea</label>
               <select id="lineKindSelect">
                 <option value="horizontal_ref">horizontal_ref</option>
+                <option value="vertical_ref">vertical_ref</option>
                 <option value="tube_axis">tube_axis</option>
                 <option value="custom">custom</option>
               </select>
@@ -120,9 +121,19 @@
                 placeholder="Ej. horiz_01"
               />
 
+              <label class="label" for="lineRealDistanceInput">Distancia real</label>
+              <input
+                id="lineRealDistanceInput"
+                class="text-input"
+                type="number"
+                step="any"
+                placeholder="Opcional para referencias"
+              />
+
               <div class="hint-box">
                 En modo <code>Lines</code>, el primer click fija el inicio y el
-                segundo click cierra la linea.
+                segundo click cierra la linea. Solo <code>vertical_ref</code>
+                se ajusta automaticamente.
               </div>
             </div>
           </section>
@@ -241,6 +252,15 @@
               class="text-input"
               type="text"
               placeholder="Aplica para puntos y lineas"
+            />
+
+            <label class="note-label" for="selectedLineRealDistanceInput">Distancia real</label>
+            <input
+              id="selectedLineRealDistanceInput"
+              class="text-input"
+              type="number"
+              step="any"
+              placeholder="Opcional para lineas de referencia"
             />
 
             <label class="note-label" for="annotationNoteInput">Nota</label>

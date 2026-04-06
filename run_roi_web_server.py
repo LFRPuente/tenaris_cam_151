@@ -197,6 +197,9 @@ class RoiWebHandler(SimpleHTTPRequestHandler):
                 "peaks_index_dom": result.peaks_index_dom,
                 "detection_roi": result.detection_roi,
                 "x_start_list": result.x_start_list,
+                "px_per_in": result.px_per_in,
+                "reference_lines": result.reference_lines,
+                "scale_samples": result.scale_samples,
             }
         )
 

@@ -23,6 +23,16 @@ def default_payload() -> dict:
     }
 
 
+def _optional_float(value: object) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    return numeric
+
+
 def _normalize_loaded_payload(payload: dict) -> dict:
     normalized = default_payload()
     normalized["image_name"] = payload.get("image_name") or payload.get("image_path")
@@ -70,6 +80,7 @@ def _normalize_loaded_payload(payload: dict) -> dict:
                 "y2": int(line.get("y2", 0)),
                 "roi_id": line.get("roi_id"),
                 "note": str(line.get("note") or ""),
+                "real_distance": _optional_float(line.get("real_distance")),
             }
         )
     normalized["lines"] = lines
@@ -131,21 +142,23 @@ def _to_toml(payload: dict) -> str:
         )
 
     for line in payload.get("lines", []):
-        lines.extend(
-            [
-                "",
-                "[[lines]]",
-                f'id = {_toml_string(line.get("id"))}',
-                f'kind = {_toml_string(line.get("kind"))}',
-                f'label = {_toml_string(line.get("label"))}',
-                f'x1 = {int(line.get("x1", 0))}',
-                f'y1 = {int(line.get("y1", 0))}',
-                f'x2 = {int(line.get("x2", 0))}',
-                f'y2 = {int(line.get("y2", 0))}',
-                f'roi_id = {_toml_string(line.get("roi_id"))}',
-                f'note = {_toml_string(line.get("note"))}',
-            ]
-        )
+        entry = [
+            "",
+            "[[lines]]",
+            f'id = {_toml_string(line.get("id"))}',
+            f'kind = {_toml_string(line.get("kind"))}',
+            f'label = {_toml_string(line.get("label"))}',
+            f'x1 = {int(line.get("x1", 0))}',
+            f'y1 = {int(line.get("y1", 0))}',
+            f'x2 = {int(line.get("x2", 0))}',
+            f'y2 = {int(line.get("y2", 0))}',
+            f'roi_id = {_toml_string(line.get("roi_id"))}',
+            f'note = {_toml_string(line.get("note"))}',
+        ]
+        real_distance = _optional_float(line.get("real_distance"))
+        if real_distance is not None:
+            entry.append(f"real_distance = {real_distance}")
+        lines.extend(entry)
 
     return "\n".join(lines) + "\n"
 
@@ -246,6 +259,7 @@ def save_rois(
     saved_lines: list[dict] = []
     line_color_map = {
         "horizontal_ref": (80, 180, 255),
+        "vertical_ref": (110, 110, 255),
         "tube_axis": (255, 120, 160),
         "custom": (120, 255, 140),
     }
@@ -258,6 +272,7 @@ def save_rois(
         label = str(line.get("label") or f"line_{index:02d}")
         roi_id = line.get("roi_id")
         note = str(line.get("note") or "")
+        real_distance = _optional_float(line.get("real_distance"))
         color = line_color_map.get(kind, (80, 180, 255))
 
         cv2.line(overview, (x1, y1), (x2, y2), color, 2, cv2.LINE_AA)
@@ -287,6 +302,7 @@ def save_rois(
                 "y2": y2,
                 "roi_id": roi_id,
                 "note": note,
+                "real_distance": real_distance,
             }
         )
 

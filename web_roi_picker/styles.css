@@ -501,6 +501,11 @@ button.ghost {
   color: #89d1ff;
 }
 
+.annotation-pill.vertical_ref {
+  background: rgba(255, 110, 110, 0.14);
+  color: #ff7878;
+}
+
 .annotation-pill.tube_axis {
   background: rgba(255, 160, 120, 0.14);
   color: #ffb48f;

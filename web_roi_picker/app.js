@@ -12,7 +12,7 @@
   fitScale: 1,
   zoom: 1,
   minZoom: 0.35,
-  maxZoom: 8,
+  maxZoom: 16,
   offsetX: 0,
   offsetY: 0,
   draft: null,
@@ -39,6 +39,7 @@ const POINT_KIND_META = {
 
 const LINE_KIND_META = {
   horizontal_ref: { color: "#89d1ff", short: "horiz" },
+  vertical_ref: { color: "#ff7878", short: "vref" },
   tube_axis: { color: "#ffb48f", short: "axis" },
   custom: { color: "#98ffab", short: "line" },
 };
@@ -77,7 +78,9 @@ const pointKindSelect = document.getElementById("pointKindSelect");
 const pointLabelInput = document.getElementById("pointLabelInput");
 const lineKindSelect = document.getElementById("lineKindSelect");
 const lineLabelInput = document.getElementById("lineLabelInput");
+const lineRealDistanceInput = document.getElementById("lineRealDistanceInput");
 const selectedLabelInput = document.getElementById("selectedLabelInput");
+const selectedLineRealDistanceInput = document.getElementById("selectedLineRealDistanceInput");
 const annotationNoteInput = document.getElementById("annotationNoteInput");
 const annotationHint = document.getElementById("annotationHint");
 const clearPreviewBtn = document.getElementById("clearPreviewBtn");
@@ -142,7 +145,7 @@ function createPreviewViewer(viewport, img) {
     img,
     zoom: 1,
     minZoom: 1,
-    maxZoom: 10,
+    maxZoom: 24,
     baseWidth: 0,
     baseHeight: 0,
     offsetX: 0,
@@ -838,6 +841,33 @@ function syncLineDraftLabel(force = false) {
   lineLabelInput.value = nextLineLabel(state.lineKind);
 }
 
+function parseRealDistance(value) {
+  if (value == null || value === "") {
+    return null;
+  }
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function formatRealDistance(value) {
+  return value == null || !Number.isFinite(Number(value)) ? "" : String(Number(value));
+}
+
+function normalizeLineGeometry(kind, x1, y1, x2, y2, anchor = "start") {
+  let xa = Math.round(Number(x1 || 0));
+  let ya = Math.round(Number(y1 || 0));
+  let xb = Math.round(Number(x2 || 0));
+  let yb = Math.round(Number(y2 || 0));
+
+  if (kind === "vertical_ref") {
+    const xRef = anchor === "end" ? xb : xa;
+    xa = xRef;
+    xb = xRef;
+  }
+
+  return { x1: xa, y1: ya, x2: xb, y2: yb };
+}
+
 function normalizeRect(x1, y1, x2, y2) {
   const xa = Math.max(0, Math.min(x1, x2));
   const xb = Math.min(state.image.width, Math.max(x1, x2));
@@ -865,15 +895,18 @@ function normalizePoint(point) {
 }
 
 function normalizeLine(line) {
+  const kind = typeof line.kind === "string" ? line.kind : "horizontal_ref";
+  const geometry = normalizeLineGeometry(kind, line.x1, line.y1, line.x2, line.y2);
   return {
-    kind: typeof line.kind === "string" ? line.kind : "horizontal_ref",
+    kind,
     label: typeof line.label === "string" ? line.label : "",
-    x1: Math.round(Number(line.x1 || 0)),
-    y1: Math.round(Number(line.y1 || 0)),
-    x2: Math.round(Number(line.x2 || 0)),
-    y2: Math.round(Number(line.y2 || 0)),
+    x1: geometry.x1,
+    y1: geometry.y1,
+    x2: geometry.x2,
+    y2: geometry.y2,
     roiIndex: roiIndexFromId(line.roi_id),
     note: typeof line.note === "string" ? line.note : "",
+    realDistance: parseRealDistance(line.real_distance ?? line.realDistance),
   };
 }
 
@@ -1115,15 +1148,17 @@ function drawCanvas() {
 
   if (state.pendingLineStart) {
     const hover = state.pendingLineHover || state.pendingLineStart;
+    const previewLine = normalizeLine({
+      kind: state.lineKind,
+      label: lineLabelInput.value.trim() || nextLineLabel(state.lineKind),
+      x1: state.pendingLineStart.x,
+      y1: state.pendingLineStart.y,
+      x2: hover.x,
+      y2: hover.y,
+      real_distance: parseRealDistance(lineRealDistanceInput?.value),
+    });
     drawLineAnnotation(
-      {
-        kind: state.lineKind,
-        label: lineLabelInput.value.trim() || nextLineLabel(state.lineKind),
-        x1: state.pendingLineStart.x,
-        y1: state.pendingLineStart.y,
-        x2: hover.x,
-        y2: hover.y,
-      },
+      previewLine,
       state.lines.length,
       true,
       { dashed: true },
@@ -1269,12 +1304,13 @@ function renderLineList() {
   state.lines.forEach((line, index) => {
     const roiLink = line.roiIndex == null ? "sin ROI" : `ROI ${line.roiIndex + 1}`;
     const length = Math.round(Math.hypot(line.x2 - line.x1, line.y2 - line.y1));
+    const refText = line.realDistance == null ? "" : ` | ref=${formatRealDistance(line.realDistance)}`;
     lineList.appendChild(
       buildAnnotationCard(
         line.label || `line_${String(index + 1).padStart(2, "0")}`,
         line.kind,
         line.kind,
-        `(${line.x1}, ${line.y1}) -> (${line.x2}, ${line.y2}) | len=${length} | ${roiLink}`,
+        `(${line.x1}, ${line.y1}) -> (${line.x2}, ${line.y2}) | len=${length}${refText} | ${roiLink}`,
         line.note,
         state.selected.type === "line" && state.selected.index === index,
         () => {
@@ -1360,6 +1396,8 @@ function renderSelection() {
     selectedMeta.textContent = "Nada seleccionado.";
     selectedLabelInput.value = "";
     selectedLabelInput.disabled = true;
+    selectedLineRealDistanceInput.value = "";
+    selectedLineRealDistanceInput.disabled = true;
     annotationNoteInput.value = "";
     annotationNoteInput.disabled = true;
     annotationHint.textContent = "Selecciona un ROI, punto o linea para editarlo.";
@@ -1379,6 +1417,8 @@ function renderSelection() {
     drawRoiPreview(roi);
     selectedLabelInput.value = "";
     selectedLabelInput.disabled = true;
+    selectedLineRealDistanceInput.value = "";
+    selectedLineRealDistanceInput.disabled = true;
     annotationNoteInput.disabled = false;
     annotationNoteInput.value = roi.note || "";
     annotationHint.textContent = "El ROI solo guarda nota. Puntos y lineas guardan label y nota.";
@@ -1400,6 +1440,8 @@ function renderSelection() {
     drawPointPreview(point);
     selectedLabelInput.disabled = false;
     selectedLabelInput.value = point.label || "";
+    selectedLineRealDistanceInput.value = "";
+    selectedLineRealDistanceInput.disabled = true;
     annotationNoteInput.disabled = false;
     annotationNoteInput.value = point.note || "";
     annotationHint.textContent = "Edita label y nota del punto seleccionado. Se guardan en TOML.";
@@ -1419,13 +1461,16 @@ function renderSelection() {
     `p1: ${line.x1}, ${line.y1}\n` +
     `p2: ${line.x2}, ${line.y2}\n` +
     `len: ${length}\n` +
+    `ref: ${line.realDistance == null ? "-" : formatRealDistance(line.realDistance)}\n` +
     `link: ${roiLink}`;
   drawLinePreview(line);
   selectedLabelInput.disabled = false;
   selectedLabelInput.value = line.label || "";
+  selectedLineRealDistanceInput.disabled = false;
+  selectedLineRealDistanceInput.value = formatRealDistance(line.realDistance);
   annotationNoteInput.disabled = false;
   annotationNoteInput.value = line.note || "";
-  annotationHint.textContent = "Edita label y nota de la linea seleccionada. Se guardan en TOML.";
+  annotationHint.textContent = "Edita label, distancia real y nota de la linea seleccionada. Se guardan en TOML.";
 }
 
 function updateDashboard() {
@@ -1485,6 +1530,7 @@ function serializeLines() {
     y2: line.y2,
     roi_id: roiIdFromIndex(line.roiIndex),
     note: line.note || "",
+    real_distance: line.realDistance,
   }));
 }
 
@@ -1525,6 +1571,9 @@ function buildTomlExport() {
     lines.push(`y2 = ${line.y2}`);
     lines.push(`roi_id = ${JSON.stringify(line.roi_id || "")}`);
     lines.push(`note = ${JSON.stringify(line.note || "")}`);
+    if (line.real_distance != null) {
+      lines.push(`real_distance = ${Number(line.real_distance)}`);
+    }
   });
 
   return `${lines.join("\n")}\n`;
@@ -1698,7 +1747,10 @@ async function previewTubeDetection() {
     Array.isArray(data.detection_roi) && data.detection_roi.length === 4
       ? `roi=${data.detection_roi.map((value) => Math.round(Number(value))).join(",")}`
       : "roi=warp";
-  previewMeta.textContent += ` | tubos=${data.tube_count ?? 0} | ${periodText} | ${roiText}`;
+  const scaleText =
+    data.px_per_in == null ? "scale=-" : `scale=${Number(data.px_per_in).toFixed(2)}px/in`;
+  const refText = Array.isArray(data.reference_lines) ? `refs=${data.reference_lines.length}` : "refs=0";
+  previewMeta.textContent += ` | tubos=${data.tube_count ?? 0} | ${periodText} | ${roiText} | ${scaleText} | ${refText}`;
   setStatus("Preview de tubos listo.");
 }
 
@@ -1851,9 +1903,8 @@ function finishLineAt(x, y) {
     return;
   }
 
-  const x2 = Math.round(x);
-  const y2 = Math.round(y);
-  const length = Math.hypot(x2 - state.pendingLineStart.x, y2 - state.pendingLineStart.y);
+  const geometry = normalizeLineGeometry(state.lineKind, state.pendingLineStart.x, state.pendingLineStart.y, x, y);
+  const length = Math.hypot(geometry.x2 - geometry.x1, geometry.y2 - geometry.y1);
   if (length < 6) {
     setStatus("La linea es demasiado corta. Marca un segundo punto mas separado.");
     return;
@@ -1863,16 +1914,17 @@ function finishLineAt(x, y) {
   const roiIndex =
     state.pendingLineStart.roiIndex != null
       ? state.pendingLineStart.roiIndex
-      : activeRoiIndexForPlacement(x2, y2);
+      : activeRoiIndexForPlacement(geometry.x2, geometry.y2);
   state.lines.push({
     kind: state.lineKind,
     label,
-    x1: state.pendingLineStart.x,
-    y1: state.pendingLineStart.y,
-    x2,
-    y2,
+    x1: geometry.x1,
+    y1: geometry.y1,
+    x2: geometry.x2,
+    y2: geometry.y2,
     roiIndex,
     note: "",
+    realDistance: parseRealDistance(lineRealDistanceInput?.value),
   });
   state.selected = { type: "line", index: state.lines.length - 1 };
   state.pendingLineStart = null;
@@ -2018,11 +2070,17 @@ roiCanvas.addEventListener("pointermove", (event) => {
       return;
     }
     if (state.dragTarget.endpoint === "start") {
-      line.x1 = Math.round(x);
-      line.y1 = Math.round(y);
+      const geometry = normalizeLineGeometry(line.kind, x, y, line.x2, line.y2);
+      line.x1 = geometry.x1;
+      line.y1 = geometry.y1;
+      line.x2 = geometry.x2;
+      line.y2 = geometry.y2;
     } else {
-      line.x2 = Math.round(x);
-      line.y2 = Math.round(y);
+      const geometry = normalizeLineGeometry(line.kind, line.x1, line.y1, x, y, "end");
+      line.x1 = geometry.x1;
+      line.y1 = geometry.y1;
+      line.x2 = geometry.x2;
+      line.y2 = geometry.y2;
     }
     renderSelection();
     drawCanvas();
@@ -2039,7 +2097,8 @@ roiCanvas.addEventListener("pointermove", (event) => {
 
   if (state.tool === "line" && state.pendingLineStart) {
     const [x, y] = pointerToImage(event);
-    state.pendingLineHover = { x: Math.round(x), y: Math.round(y) };
+    const geometry = normalizeLineGeometry(state.lineKind, state.pendingLineStart.x, state.pendingLineStart.y, x, y);
+    state.pendingLineHover = { x: geometry.x2, y: geometry.y2 };
     drawCanvas();
   }
 });
@@ -2216,6 +2275,18 @@ selectedLabelInput.addEventListener("input", (event) => {
   updateDashboard();
 });
 
+selectedLineRealDistanceInput.addEventListener("input", (event) => {
+  const line = selectedLine();
+  if (!line) {
+    return;
+  }
+  line.realDistance = parseRealDistance(event.target.value);
+  renderSelection();
+  renderLineList();
+  drawCanvas();
+  updateDashboard();
+});
+
 annotationNoteInput.addEventListener("input", (event) => {
   if (state.selected.type === "roi") {
     const roi = selectedRoi();
@@ -2299,6 +2370,7 @@ function imageUrlByName(name) {
 async function init() {
   try {
     selectedLabelInput.disabled = true;
+    selectedLineRealDistanceInput.disabled = true;
     annotationNoteInput.disabled = true;
     pointKindSelect.value = state.pointKind;
     lineKindSelect.value = state.lineKind;
@@ -2309,7 +2381,7 @@ async function init() {
     bindOverlayQuadEditor();
     await loadImagesBootstrap();
     await loadImageAndAnnotations(state.imageName);
-    setStatus("Ready. Usa ROI para contexto, Points para marcas y Lines para horizontales por dos clicks.");
+    setStatus("Ready. Usa ROI para contexto, Points para marcas y Lines para referencias horizontales o verticales.");
   } catch (error) {
     setStatus(String(error));
   }

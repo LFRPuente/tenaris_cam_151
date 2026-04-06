@@ -50,6 +50,69 @@ y = 1521
 roi_id = "roi_02"
 note = "lower right orange mark"
 
+[[points]]
+id = "point_05"
+kind = "mark"
+label = "mark_03"
+x = 1276
+y = 1509
+roi_id = ""
+note = ""
+
+[[points]]
+id = "point_06"
+kind = "mark"
+label = "mark_04"
+x = 1040
+y = 1507
+roi_id = "roi_02"
+note = ""
+
+[[points]]
+id = "point_07"
+kind = "mark"
+label = "mark_05"
+x = 1019
+y = 1506
+roi_id = "roi_02"
+note = ""
+
+[[points]]
+id = "point_08"
+kind = "mark"
+label = "mark_06"
+x = 834
+y = 1504
+roi_id = "roi_02"
+note = ""
+
+[[points]]
+id = "point_09"
+kind = "mark"
+label = "mark_07"
+x = 813
+y = 1504
+roi_id = "roi_02"
+note = ""
+
+[[points]]
+id = "point_10"
+kind = "tube_top"
+label = "top_03"
+x = 966
+y = 151
+roi_id = "roi_01"
+note = ""
+
+[[points]]
+id = "point_11"
+kind = "tube_top"
+label = "top_04"
+x = 1050
+y = 149
+roi_id = "roi_01"
+note = ""
+
 [[lines]]
 id = "line_01"
 kind = "horizontal_ref"
