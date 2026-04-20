@@ -23,6 +23,8 @@
   pendingLineStart: null,
   pendingLineHover: null,
   homographyQuad: null,
+  srcPointsOverride: null,
+  dstRectOverride: null,
   overlayPreviewDrag: null,
   previewRect: null,
   previewHomographyMatrix: null,
@@ -910,6 +912,34 @@ function normalizeLine(line) {
   };
 }
 
+function normalizeSrcPointsOverride(points) {
+  if (!Array.isArray(points) || points.length !== 4) {
+    return null;
+  }
+  const normalized = points.map((point) => {
+    if (Array.isArray(point)) {
+      return [Math.round(Number(point[0])), Math.round(Number(point[1]))];
+    }
+    return [Math.round(Number(point.x)), Math.round(Number(point.y))];
+  });
+  return normalized.every(([x, y]) => Number.isFinite(x) && Number.isFinite(y)) ? normalized : null;
+}
+
+function normalizeDstRectOverride(rect) {
+  if (!Array.isArray(rect) || rect.length !== 4) {
+    return null;
+  }
+  const normalized = rect.map((value) => Number(value));
+  return normalized.every((value) => Number.isFinite(value)) ? normalized : null;
+}
+
+function currentHomographySrcPoints() {
+  if (Array.isArray(state.homographyQuad) && state.homographyQuad.length === 4) {
+    return normalizeSrcPointsOverride(state.homographyQuad);
+  }
+  return normalizeSrcPointsOverride(state.srcPointsOverride);
+}
+
 function clampOffset() {
   if (!state.image) {
     return;
@@ -1539,6 +1569,17 @@ function buildTomlExport() {
   lines.push(`image_name = ${JSON.stringify(state.imageName || "")}`);
   lines.push(`updated_at = ${JSON.stringify(new Date().toISOString().slice(0, 19))}`);
 
+  const srcPointsOverride = currentHomographySrcPoints();
+  if (srcPointsOverride) {
+    const pointsText = srcPointsOverride.map(([x, y]) => `[${x}, ${y}]`).join(", ");
+    lines.push(`src_points_override = [${pointsText}]`);
+  }
+
+  const dstRectOverride = srcPointsOverride ? null : Array.isArray(state.previewRect) ? state.previewRect : state.dstRectOverride;
+  if (Array.isArray(dstRectOverride) && dstRectOverride.length === 4) {
+    lines.push(`dst_rect_override = [${dstRectOverride.map((value) => Number(value).toFixed(3).replace(/\.000$/, "")).join(", ")}]`);
+  }
+
   serializeRois().forEach((roi, index) => {
     lines.push("");
     lines.push("[[rois]]");
@@ -1620,6 +1661,8 @@ async function loadImageAndAnnotations(name) {
   state.rois = (data.rois || []).map(normalizeRoi);
   state.points = (data.points || []).map(normalizePoint);
   state.lines = (data.lines || []).map(normalizeLine);
+  state.srcPointsOverride = normalizeSrcPointsOverride(data.src_points_override);
+  state.dstRectOverride = normalizeDstRectOverride(data.dst_rect_override);
   state.selected = { type: null, index: null };
   state.draft = null;
   state.dragMode = null;
@@ -1646,23 +1689,37 @@ async function saveAnnotations() {
       rois: serializeRois(),
       points: serializePoints(),
       lines: serializeLines(),
+      src_points_override: currentHomographySrcPoints(),
+      dst_rect_override: currentHomographySrcPoints()
+        ? null
+        : Array.isArray(state.previewRect)
+          ? state.previewRect
+          : state.dstRectOverride,
     }),
   });
 
   state.rois = (payload.rois || []).map(normalizeRoi);
   state.points = (payload.points || []).map(normalizePoint);
   state.lines = (payload.lines || []).map(normalizeLine);
+  state.srcPointsOverride = normalizeSrcPointsOverride(payload.src_points_override);
+  state.dstRectOverride = normalizeDstRectOverride(payload.dst_rect_override);
   rerenderAllAnnotations();
   setStatus(`Saved to manual_rois/${state.imageName.replace(/\.jpg$/i, "_rois.toml")}`);
 }
 
 function currentAnnotationsPayload(imageName = state.imageName) {
+  const srcPointsOverride = currentHomographySrcPoints();
   return {
     image_name: imageName,
     rois: serializeRois(),
     points: serializePoints(),
     lines: serializeLines(),
-    dst_rect_override: Array.isArray(state.previewRect) ? state.previewRect : null,
+    src_points_override: srcPointsOverride,
+    dst_rect_override: srcPointsOverride
+      ? null
+      : Array.isArray(state.previewRect)
+        ? state.previewRect
+        : state.dstRectOverride,
   };
 }
 

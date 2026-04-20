@@ -2107,6 +2107,7 @@ def build_tube_detection_preview(
     rois: list[dict],
     output_dir: str | Path,
     *,
+    src_points_override: list | None = None,
     dst_rect_override: list | tuple | dict | None = None,
 ) -> TubeDetectionPreviewResult:
     homography = build_homography_preview(
@@ -2114,6 +2115,7 @@ def build_tube_detection_preview(
         lines=lines,
         points=points,
         output_dir=output_dir,
+        src_points_override=src_points_override,
         dst_rect_override=dst_rect_override,
     )
 

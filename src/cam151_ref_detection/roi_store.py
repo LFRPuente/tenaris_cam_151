@@ -17,6 +17,8 @@ def default_payload() -> dict:
         "image_name": None,
         "updated_at": None,
         "overview_path": None,
+        "src_points_override": None,
+        "dst_rect_override": None,
         "rois": [],
         "points": [],
         "lines": [],
@@ -33,11 +35,50 @@ def _optional_float(value: object) -> float | None:
     return numeric
 
 
+def _normalize_src_points_override(value: object) -> list[list[float]] | None:
+    if not value:
+        return None
+    if not isinstance(value, list) or len(value) != 4:
+        return None
+
+    normalized: list[list[float]] = []
+    for point in value:
+        try:
+            if isinstance(point, dict):
+                x = float(point.get("x"))
+                y = float(point.get("y"))
+            else:
+                x = float(point[0])
+                y = float(point[1])
+        except (TypeError, ValueError, IndexError):
+            return None
+        normalized.append([x, y])
+    return normalized
+
+
+def _normalize_dst_rect_override(value: object) -> list[float] | None:
+    if not value:
+        return None
+    try:
+        if isinstance(value, dict):
+            rect = [value.get("x0"), value.get("y0"), value.get("x1"), value.get("y1")]
+        else:
+            rect = list(value)
+        if len(rect) != 4:
+            return None
+        normalized = [float(item) for item in rect]
+    except (TypeError, ValueError):
+        return None
+    return normalized
+
+
 def _normalize_loaded_payload(payload: dict) -> dict:
     normalized = default_payload()
     normalized["image_name"] = payload.get("image_name") or payload.get("image_path")
     normalized["updated_at"] = payload.get("updated_at")
     normalized["overview_path"] = payload.get("overview_path")
+    normalized["src_points_override"] = _normalize_src_points_override(payload.get("src_points_override"))
+    normalized["dst_rect_override"] = _normalize_dst_rect_override(payload.get("dst_rect_override"))
 
     rois = []
     for index, roi in enumerate(payload.get("rois", []), start=1):
@@ -106,12 +147,29 @@ def _toml_string(value: str | None) -> str:
     return json.dumps("" if value is None else str(value), ensure_ascii=False)
 
 
+def _format_number(value: object) -> str:
+    numeric = float(value)
+    if numeric.is_integer():
+        return str(int(numeric))
+    return f"{numeric:.6f}".rstrip("0").rstrip(".")
+
+
 def _to_toml(payload: dict) -> str:
     lines = [
         f'image_name = {_toml_string(payload.get("image_name"))}',
         f'updated_at = {_toml_string(payload.get("updated_at"))}',
         f'overview_path = {_toml_string(payload.get("overview_path"))}',
     ]
+
+    src_points_override = _normalize_src_points_override(payload.get("src_points_override"))
+    if src_points_override:
+        points_text = ", ".join(f"[{_format_number(x)}, {_format_number(y)}]" for x, y in src_points_override)
+        lines.append(f"src_points_override = [{points_text}]")
+
+    dst_rect_override = _normalize_dst_rect_override(payload.get("dst_rect_override"))
+    if dst_rect_override:
+        rect_text = ", ".join(_format_number(value) for value in dst_rect_override)
+        lines.append(f"dst_rect_override = [{rect_text}]")
 
     for roi in payload.get("rois", []):
         xyxy = ", ".join(str(int(value)) for value in roi.get("xyxy", [0, 0, 0, 0]))
@@ -169,6 +227,8 @@ def save_rois(
     rois: list[dict],
     points: list[dict] | None = None,
     lines: list[dict] | None = None,
+    src_points_override: list | None = None,
+    dst_rect_override: list | tuple | dict | None = None,
 ) -> dict:
     path = Path(path)
     image_path = Path(image_path)
@@ -312,6 +372,8 @@ def save_rois(
         "image_name": image_path.name,
         "updated_at": datetime.now().isoformat(timespec="seconds"),
         "overview_path": f"{image_path.stem}/roi_overview.jpg",
+        "src_points_override": _normalize_src_points_override(src_points_override),
+        "dst_rect_override": _normalize_dst_rect_override(dst_rect_override),
         "rois": saved_rois,
         "points": saved_points,
         "lines": saved_lines,

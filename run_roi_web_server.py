@@ -82,6 +82,8 @@ class RoiWebHandler(SimpleHTTPRequestHandler):
             rois = list(payload.get("rois", []))
             points = list(payload.get("points", []))
             lines = list(payload.get("lines", []))
+            src_points_override = list(payload.get("src_points_override") or [])
+            dst_rect_override = payload.get("dst_rect_override")
         except Exception as exc:
             self._json_response({"error": f"Invalid request: {exc}"}, status=400)
             return
@@ -93,7 +95,15 @@ class RoiWebHandler(SimpleHTTPRequestHandler):
 
         MANUAL_ROIS_DIR.mkdir(parents=True, exist_ok=True)
         save_path = MANUAL_ROIS_DIR / f"{image_path.stem}_rois.toml"
-        saved = save_rois(save_path, image_path, rois, points=points, lines=lines)
+        saved = save_rois(
+            save_path,
+            image_path,
+            rois,
+            points=points,
+            lines=lines,
+            src_points_override=src_points_override,
+            dst_rect_override=dst_rect_override,
+        )
         self._json_response(saved)
 
     def _handle_homography_preview(self) -> None:
@@ -104,7 +114,7 @@ class RoiWebHandler(SimpleHTTPRequestHandler):
             points = list(payload.get("points", []))
             lines = list(payload.get("lines", []))
             warp_padding = dict(payload.get("warp_padding", {}))
-            src_points_override = list(payload.get("src_points_override", []))
+            src_points_override = list(payload.get("src_points_override") or [])
             dst_rect_override = payload.get("dst_rect_override")
         except Exception as exc:
             self._json_response({"error": f"Invalid request: {exc}"}, status=400)
@@ -153,6 +163,7 @@ class RoiWebHandler(SimpleHTTPRequestHandler):
             rois = list(payload.get("rois", []))
             points = list(payload.get("points", []))
             lines = list(payload.get("lines", []))
+            src_points_override = list(payload.get("src_points_override") or [])
             dst_rect_override = payload.get("dst_rect_override")
         except Exception as exc:
             self._json_response({"error": f"Invalid request: {exc}"}, status=400)
@@ -171,6 +182,7 @@ class RoiWebHandler(SimpleHTTPRequestHandler):
                 points=points,
                 rois=rois,
                 output_dir=preview_dir,
+                src_points_override=src_points_override,
                 dst_rect_override=dst_rect_override,
             )
         except Exception as exc:

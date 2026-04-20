@@ -1,5 +1,5 @@
 image_name = "cam151_wide_20260323_103026.jpg"
-updated_at = "2026-04-05T22:52:55"
+updated_at = "2026-04-20T12:01:40"
 overview_path = "cam151_wide_20260323_103026/roi_overview.jpg"
 
 [[rois]]
@@ -120,7 +120,7 @@ label = "top_ref"
 x1 = 926
 y1 = 230
 x2 = 1047
-y2 = 220
+y2 = 230
 roi_id = "roi_01"
 note = ""
 
@@ -128,10 +128,10 @@ note = ""
 id = "line_02"
 kind = "horizontal_ref"
 label = "bottom_horrizontal"
-x1 = 749
-y1 = 1504
-x2 = 1137
-y2 = 1508
+x1 = 780
+y1 = 1506
+x2 = 1127
+y2 = 1506
 roi_id = "roi_02"
 note = ""
 
@@ -139,9 +139,9 @@ note = ""
 id = "line_03"
 kind = "horizontal_ref"
 label = "vertical reftube"
-x1 = 954
-y1 = 181
+x1 = 952
+y1 = 186
 x2 = 894
-y2 = 763
+y2 = 186
 roi_id = "roi_01"
 note = ""

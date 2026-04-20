@@ -511,14 +511,30 @@ def build_homography_preview(
     override_points = _normalize_src_points_override(src_points_override)
     override_rect = _normalize_dst_rect_override(dst_rect_override)
 
-    if _has_secondary_parallel_guide_refs(normalized_points, normalized_lines):
+    if override_points is not None:
+        computed_src_points = override_points
+        top_left, top_right, bottom_left, bottom_right = computed_src_points
+        used_labels = ["TL/TR", "BL/BR", "TL->BL", "TR->BR"]
+        debug = {
+            "top_ref": (top_left, top_right),
+            "bottom_ref": (bottom_left, bottom_right),
+            "left_side": (top_left, bottom_left),
+            "right_side": (top_right, bottom_right),
+            "anchor_points": [
+                ("TL", top_left),
+                ("TR", top_right),
+                ("BL", bottom_left),
+                ("BR", bottom_right),
+            ],
+        }
+    elif _has_secondary_parallel_guide_refs(normalized_points, normalized_lines):
         computed_src_points, used_labels, debug = _build_from_secondary_parallel_guides(normalized_points, normalized_lines)
     elif _has_primary_parallel_guide_refs(normalized_points, normalized_lines):
         computed_src_points, used_labels, debug = _build_from_parallel_guides(normalized_points, normalized_lines)
     else:
         computed_src_points, used_labels, debug = _build_from_horizontal_lines(normalized_lines)
 
-    base_src_points = override_points or computed_src_points
+    base_src_points = computed_src_points
     _validate_quad(base_src_points)
 
     top_left, top_right, bottom_left, bottom_right = base_src_points
@@ -529,7 +545,10 @@ def build_homography_preview(
 
     base_width = max(240, int(round(max(top_width, bottom_width))))
     base_height = max(320, int(round(max(left_height, right_height))))
-    padding = _apply_default_padding(padding, base_width, base_height)
+    if override_points is None:
+        padding = _apply_default_padding(padding, base_width, base_height)
+    else:
+        padding = {"left": 0, "right": 0, "top": 0, "bottom": 0}
     base_dst_points = np.float32(
         [
             [0, 0],
@@ -542,12 +561,15 @@ def build_homography_preview(
     base_inverse_transform = np.linalg.inv(base_transform)
 
     if override_rect is None:
-        dst_rect = (
-            float(-padding["left"]),
-            float(-padding["top"]),
-            float(base_width - 1 + padding["right"]),
-            float(base_height - 1 + padding["bottom"]),
-        )
+        if override_points is None:
+            dst_rect = (
+                float(-padding["left"]),
+                float(-padding["top"]),
+                float(base_width - 1 + padding["right"]),
+                float(base_height - 1 + padding["bottom"]),
+            )
+        else:
+            dst_rect = (0.0, 0.0, float(base_width - 1), float(base_height - 1))
     else:
         dst_rect = override_rect
 
