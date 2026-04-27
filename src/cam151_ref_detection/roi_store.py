@@ -122,6 +122,7 @@ def _normalize_loaded_payload(payload: dict) -> dict:
                 "roi_id": line.get("roi_id"),
                 "note": str(line.get("note") or ""),
                 "real_distance": _optional_float(line.get("real_distance")),
+                "coordinate_space": str(line.get("coordinate_space") or ""),
             }
         )
     normalized["lines"] = lines
@@ -216,6 +217,9 @@ def _to_toml(payload: dict) -> str:
         real_distance = _optional_float(line.get("real_distance"))
         if real_distance is not None:
             entry.append(f"real_distance = {real_distance}")
+        coordinate_space = str(line.get("coordinate_space") or "")
+        if coordinate_space:
+            entry.append(f'coordinate_space = "{coordinate_space}"')
         lines.extend(entry)
 
     return "\n".join(lines) + "\n"

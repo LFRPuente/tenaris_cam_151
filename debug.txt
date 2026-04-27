@@ -1,0 +1,264 @@
+[pick_range] img=(1200, 1600) dark_thr=114 min_dark_run=224 min_stack_y=120 ranges=[(412, 419), (510, 517), (580, 589), (637, 647), (652, 667), (669, 950), (962, 1039), (1087, 1125)] stack_y0=392 stack_y1=1145
+[pick_range] img=(1050, 1931) dark_thr=122 min_dark_run=270 min_stack_y=105 ranges=[(506, 514), (556, 566), (585, 1049)] stack_y0=486 stack_y1=1049
+[pick_range] img=(1050, 1931) dark_thr=122 min_dark_run=153 min_stack_y=105 ranges=[(113, 123), (151, 161), (224, 232), (331, 340), (348, 358), (383, 391), (414, 428), (435, 1049)] stack_y0=93 stack_y1=1049
+[pick_range] img=(1050, 1931) dark_thr=122 min_dark_run=153 min_stack_y=105 ranges=[(113, 123), (151, 161), (224, 232), (331, 340), (348, 358), (383, 391), (414, 428), (435, 1049)] stack_y0=93 stack_y1=1049
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1149, 650, 3)
+cam152_mode=True shape=(1149, 650, 3)
+[pick_range] img=(1149, 650) dark_thr=128 min_dark_run=109 min_stack_y=115 ranges=[(117, 129), (141, 167), (181, 192), (203, 211), (221, 232), (241, 251), (262, 269), (280, 290), (300, 309), (320, 327), (338, 350), (356, 373), (375, 386), (397, 405), (430, 444), (453, 461), (465, 481), (486, 495), (507, 521), (529, 541), (565, 598), (605, 634), (657, 763), (767, 788), (794, 1065), (1070, 1116), (1131, 1148)] stack_y0=97 stack_y1=1148
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1149, 1997, 3)
+cam152_mode=True shape=(1149, 1997, 3)
+[pick_range] img=(1149, 1997) dark_thr=123 min_dark_run=270 min_stack_y=115 ranges=[(127, 145), (167, 192), (202, 217), (245, 279), (363, 410), (424, 441), (452, 474), (481, 519), (529, 549), (552, 565), (586, 658), (680, 1144)] stack_y0=107 stack_y1=1148
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1149, 1997, 3)
+cam152_mode=True shape=(1149, 1997, 3)
+[pick_range] img=(1149, 1997) dark_thr=101 min_dark_run=230 min_stack_y=115 ranges=[(130, 148), (193, 216), (246, 259), (266, 279), (375, 1148)] stack_y0=110 stack_y1=1148
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1209, 940, 3)
+cam152_mode=True shape=(1209, 940, 3)
+[pick_range] img=(1209, 940) dark_thr=95 min_dark_run=196 min_stack_y=121 ranges=[(196, 208), (249, 259), (269, 280), (345, 1208)] stack_y0=176 stack_y1=1208
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1209, 940, 3)
+cam152_mode=True shape=(1209, 940, 3)
+[pick_range] img=(1209, 940) dark_thr=145 min_dark_run=125 min_stack_y=121 ranges=[(122, 147), (174, 206), (215, 267), (277, 286), (296, 307), (315, 325), (335, 344), (355, 364), (374, 384), (393, 402), (411, 460), (471, 480), (503, 518), (527, 556), (561, 569), (581, 595), (604, 616), (639, 673), (679, 708), (732, 839), (841, 863), (869, 1205)] stack_y0=102 stack_y1=1208
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1227, 576, 3)
+cam152_mode=True shape=(1227, 576, 3)
+[pick_range] img=(1227, 576) dark_thr=129 min_dark_run=94 min_stack_y=123 ranges=[(124, 148), (174, 205), (216, 246), (255, 267), (277, 286), (295, 307), (315, 326), (336, 344), (354, 364), (374, 384), (394, 402), (412, 426), (431, 447), (449, 461), (471, 480), (503, 519), (527, 556), (560, 570), (580, 596), (603, 615), (637, 673), (680, 709), (715, 722), (731, 864), (869, 1141), (1145, 1191), (1205, 1226)] stack_y0=104 stack_y1=1226
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1221, 615, 3)
+cam152_mode=True shape=(1221, 615, 3)
+[pick_range] img=(1221, 615) dark_thr=127 min_dark_run=94 min_stack_y=122 ranges=[(124, 148), (174, 206), (216, 244), (256, 268), (277, 287), (295, 307), (315, 326), (336, 345), (354, 365), (374, 384), (394, 402), (412, 427), (431, 461), (471, 481), (486, 494), (503, 519), (527, 557), (560, 570), (580, 596), (603, 616), (636, 673), (679, 709), (714, 722), (731, 864), (868, 1141), (1143, 1191), (1205, 1220)] stack_y0=104 stack_y1=1220
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1214, 586, 3)
+cam152_mode=True shape=(1214, 586, 3)
+[pick_range] img=(1214, 586) dark_thr=126 min_dark_run=90 min_stack_y=121 ranges=[(124, 148), (174, 206), (216, 243), (256, 268), (277, 287), (295, 307), (315, 327), (336, 344), (354, 365), (374, 384), (394, 402), (412, 428), (430, 461), (470, 481), (486, 494), (503, 519), (527, 557), (560, 570), (579, 596), (603, 616), (636, 673), (679, 709), (714, 722), (730, 864), (868, 1191), (1205, 1212)] stack_y0=104 stack_y1=1213
+_handle_tube_detection_preview called
+image_name=cam_152.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1018, 507, 3)
+cam152_mode=True shape=(1018, 507, 3)
+[pick_range] img=(1018, 507) dark_thr=156 min_dark_run=50 min_stack_y=102 ranges=[(555, 1017)] stack_y0=535 stack_y1=1017
+_handle_tube_detection_preview called
+image_name=cam_152.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1031, 549, 3)
+cam152_mode=True shape=(1031, 549, 3)
+[pick_range] img=(1031, 549) dark_thr=157 min_dark_run=50 min_stack_y=103 ranges=[(555, 1030)] stack_y0=535 stack_y1=1030
+_handle_tube_detection_preview called
+image_name=cam_152.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1031, 549, 3)
+cam152_mode=True shape=(1031, 549, 3)
+[pick_range] img=(1031, 549) dark_thr=157 min_dark_run=50 min_stack_y=103 ranges=[(555, 1030)] stack_y0=535 stack_y1=1030
+_handle_tube_detection_preview called
+image_name=cam_152.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1018, 507, 3)
+cam152_mode=True shape=(1018, 507, 3)
+[pick_range] img=(1018, 507) dark_thr=156 min_dark_run=50 min_stack_y=102 ranges=[(555, 1017)] stack_y0=535 stack_y1=1017
+_handle_tube_detection_preview called
+image_name=cam_152.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1009, 507, 3)
+cam152_mode=True shape=(1009, 507, 3)
+[pick_range] img=(1009, 507) dark_thr=156 min_dark_run=74 min_stack_y=101 ranges=[(101, 110), (547, 1008)] stack_y0=81 stack_y1=1008
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1149, 1997, 3)
+cam152_mode=True shape=(1149, 1997, 3)
+[pick_range] img=(1149, 1997) dark_thr=123 min_dark_run=270 min_stack_y=115 ranges=[(127, 145), (167, 192), (202, 217), (245, 279), (363, 410), (424, 441), (452, 474), (481, 519), (529, 549), (552, 565), (586, 658), (680, 1144)] stack_y0=107 stack_y1=1148
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1149, 1205, 3)
+cam152_mode=True shape=(1149, 1205, 3)
+[pick_range] img=(1149, 1205) dark_thr=107 min_dark_run=186 min_stack_y=115 ranges=[(128, 144), (247, 279), (310, 317), (329, 336), (362, 378), (381, 410), (424, 442), (447, 473), (483, 524), (528, 549), (552, 566), (586, 675), (679, 1147)] stack_y0=108 stack_y1=1148
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1140, 515, 3)
+cam152_mode=True shape=(1140, 515, 3)
+[pick_range] img=(1140, 515) dark_thr=126 min_dark_run=93 min_stack_y=114 ranges=[(114, 126), (133, 142), (155, 180), (195, 205), (216, 224), (234, 245), (254, 264), (293, 303), (313, 322), (333, 340), (351, 364), (370, 384), (390, 399), (410, 418), (445, 456), (479, 494), (500, 508), (519, 534), (542, 554), (577, 610), (618, 647), (670, 777), (781, 802), (807, 1061), (1063, 1079), (1083, 1130)] stack_y0=94 stack_y1=1139
+_handle_tube_detection_preview called
+image_name=cam_151_202604021.jpeg
+detection_roi=None cam152_mode=False warp_shape=(1149, 789, 3)
+cam152_mode=False shape=(1149, 789, 3)
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1149, 1997, 3)
+cam152_mode=True shape=(1149, 1997, 3)
+[pick_range] img=(1149, 1997) dark_thr=123 min_dark_run=270 min_stack_y=115 ranges=[(127, 145), (167, 192), (202, 217), (245, 279), (363, 410), (424, 441), (452, 474), (481, 519), (529, 549), (552, 565), (586, 658), (680, 1144)] stack_y0=107 stack_y1=1148
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1141, 1293, 3)
+cam152_mode=True shape=(1141, 1293, 3)
+[pick_range] img=(1141, 1293) dark_thr=150 min_dark_run=140 min_stack_y=114 ranges=[(114, 145), (154, 187), (190, 206), (217, 226), (235, 246), (255, 265), (275, 284), (294, 303), (313, 323), (333, 341), (349, 363), (371, 400), (411, 419), (444, 457), (467, 476), (480, 494), (522, 534), (544, 555), (579, 611), (619, 628), (633, 647), (676, 683), (686, 760), (764, 777), (783, 803), (808, 1136)] stack_y0=94 stack_y1=1140
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1101, 512, 3)
+cam152_mode=True shape=(1101, 512, 3)
+[pick_range] img=(1101, 512) dark_thr=126 min_dark_run=90 min_stack_y=110 ranges=[(115, 140), (155, 166), (177, 185), (195, 206), (215, 225), (254, 263), (274, 283), (312, 324), (330, 345), (350, 360), (370, 379), (406, 417), (439, 455), (460, 469), (481, 495), (503, 515), (539, 571), (579, 608), (631, 737), (742, 763), (768, 1021), (1024, 1040), (1044, 1091)] stack_y0=95 stack_y1=1100
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1115, 501, 3)
+cam152_mode=True shape=(1115, 501, 3)
+[pick_range] img=(1115, 501) dark_thr=126 min_dark_run=90 min_stack_y=112 ranges=[(115, 140), (155, 166), (177, 185), (195, 206), (215, 225), (254, 263), (274, 283), (294, 301), (312, 324), (330, 345), (350, 360), (370, 379), (406, 417), (439, 454), (460, 469), (482, 495), (503, 515), (539, 571), (579, 608), (631, 720), (723, 737), (742, 763), (768, 1021), (1024, 1040), (1044, 1091), (1105, 1113)] stack_y0=95 stack_y1=1114
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1115, 501, 3)
+cam152_mode=True shape=(1115, 501, 3)
+[pick_range] img=(1115, 501) dark_thr=126 min_dark_run=90 min_stack_y=112 ranges=[(115, 140), (155, 166), (177, 185), (195, 206), (215, 225), (254, 263), (274, 283), (294, 301), (312, 324), (330, 345), (350, 360), (370, 379), (406, 417), (439, 454), (460, 469), (482, 495), (503, 515), (539, 571), (579, 608), (631, 720), (723, 737), (742, 763), (768, 1021), (1024, 1040), (1044, 1091), (1105, 1113)] stack_y0=95 stack_y1=1114
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1115, 501, 3)
+cam152_mode=True shape=(1115, 501, 3)
+[pick_range] img=(1115, 501) dark_thr=126 min_dark_run=90 min_stack_y=112 ranges=[(115, 140), (155, 166), (177, 185), (195, 206), (215, 225), (254, 263), (274, 283), (294, 301), (312, 324), (330, 345), (350, 360), (370, 379), (406, 417), (439, 454), (460, 469), (482, 495), (503, 515), (539, 571), (579, 608), (631, 720), (723, 737), (742, 763), (768, 1021), (1024, 1040), (1044, 1091), (1105, 1113)] stack_y0=95 stack_y1=1114
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1115, 501, 3)
+cam152_mode=True shape=(1115, 501, 3)
+[pick_range] img=(1115, 501) dark_thr=126 min_dark_run=90 min_stack_y=112 ranges=[(115, 140), (155, 166), (177, 185), (195, 206), (215, 225), (254, 263), (274, 283), (294, 301), (312, 324), (330, 345), (350, 360), (370, 379), (406, 417), (439, 454), (460, 469), (482, 495), (503, 515), (539, 571), (579, 608), (631, 720), (723, 737), (742, 763), (768, 1021), (1024, 1040), (1044, 1091), (1105, 1113)] stack_y0=95 stack_y1=1114
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1130, 587, 3)
+cam152_mode=True shape=(1130, 587, 3)
+[pick_range] img=(1130, 587) dark_thr=123 min_dark_run=101 min_stack_y=113 ranges=[(125, 133), (145, 170), (186, 196), (207, 215), (225, 236), (245, 255), (284, 293), (304, 313), (341, 354), (360, 375), (380, 389), (400, 409), (433, 447), (457, 465), (468, 485), (489, 499), (509, 525), (532, 544), (566, 601), (609, 637), (660, 768), (770, 792), (798, 1069), (1073, 1120)] stack_y0=105 stack_y1=1129
+_handle_tube_detection_preview called
+image_name=cam_152.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1009, 507, 3)
+cam152_mode=True shape=(1009, 507, 3)
+[pick_range] img=(1009, 507) dark_thr=156 min_dark_run=74 min_stack_y=101 ranges=[(101, 110), (547, 1008)] stack_y0=81 stack_y1=1008
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1149, 1997, 3)
+cam152_mode=True shape=(1149, 1997, 3)
+[pick_range] img=(1149, 1997) dark_thr=123 min_dark_run=270 min_stack_y=115 ranges=[(127, 145), (167, 192), (202, 217), (245, 279), (363, 410), (424, 441), (452, 474), (481, 519), (529, 549), (552, 565), (586, 658), (680, 1144)] stack_y0=107 stack_y1=1148
+_handle_tube_detection_preview called
+image_name=cam_152.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1009, 507, 3)
+cam152_mode=True shape=(1009, 507, 3)
+[pick_range] img=(1009, 507) dark_thr=156 min_dark_run=74 min_stack_y=101 ranges=[(101, 110), (547, 1008)] stack_y0=81 stack_y1=1008
+_handle_tube_detection_preview called
+image_name=cam_152.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1009, 507, 3)
+cam152_mode=True shape=(1009, 507, 3)
+[pick_range] img=(1009, 507) dark_thr=156 min_dark_run=74 min_stack_y=101 ranges=[(101, 110), (547, 1008)] stack_y0=81 stack_y1=1008
+_handle_tube_detection_preview called
+image_name=cam_152.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1009, 507, 3)
+cam152_mode=True shape=(1009, 507, 3)
+[pick_range] img=(1009, 507) dark_thr=156 min_dark_run=72 min_stack_y=101 ranges=[(101, 110), (547, 1008)] stack_y0=81 stack_y1=1008
+_handle_tube_detection_preview called
+image_name=cam_152.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1009, 507, 3)
+cam152_mode=True shape=(1009, 507, 3)
+[pick_range] img=(1009, 507) dark_thr=156 min_dark_run=72 min_stack_y=101 ranges=[(101, 110), (547, 1008)] stack_y0=81 stack_y1=1008
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1149, 1997, 3)
+cam152_mode=True shape=(1149, 1997, 3)
+[pick_range] img=(1149, 1997) dark_thr=123 min_dark_run=270 min_stack_y=115 ranges=[(127, 145), (167, 192), (202, 217), (245, 279), (363, 410), (424, 441), (452, 474), (481, 519), (529, 549), (552, 565), (586, 658), (680, 1144)] stack_y0=107 stack_y1=1148
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1152, 1290, 3)
+cam152_mode=True shape=(1152, 1290, 3)
+[pick_range] img=(1152, 1290) dark_thr=150 min_dark_run=138 min_stack_y=115 ranges=[(125, 156), (165, 199), (201, 217), (228, 237), (246, 257), (266, 276), (286, 295), (305, 314), (324, 334), (344, 353), (361, 374), (381, 411), (422, 430), (455, 468), (478, 487), (491, 506), (533, 546), (555, 566), (590, 622), (630, 639), (643, 658), (687, 694), (697, 771), (775, 788), (794, 814), (819, 1148)] stack_y0=105 stack_y1=1151
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(980, 463, 3)
+cam152_mode=True shape=(980, 463, 3)
+[pick_range] img=(980, 463) dark_thr=121 min_dark_run=83 min_stack_y=98 ranges=[(133, 142), (153, 162), (191, 203), (210, 223), (230, 238), (249, 258), (285, 296), (318, 334), (340, 348), (359, 374), (382, 393), (418, 450), (458, 487), (510, 600), (602, 616), (621, 642), (647, 693), (696, 900), (904, 919), (923, 970)] stack_y0=113 stack_y1=979
+_handle_tube_detection_preview called
+image_name=cam_151_202604021.jpeg
+detection_roi=None cam152_mode=False warp_shape=(1149, 789, 3)
+cam152_mode=False shape=(1149, 789, 3)
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1149, 1997, 3)
+cam152_mode=True shape=(1149, 1997, 3)
+[pick_range] img=(1149, 1997) dark_thr=123 min_dark_run=270 min_stack_y=115 ranges=[(127, 145), (167, 192), (202, 217), (245, 279), (363, 410), (424, 441), (452, 474), (481, 519), (529, 549), (552, 565), (586, 658), (680, 1144)] stack_y0=107 stack_y1=1148
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1138, 1347, 3)
+cam152_mode=True shape=(1138, 1347, 3)
+[pick_range] img=(1138, 1347) dark_thr=147 min_dark_run=153 min_stack_y=114 ranges=[(114, 142), (151, 203), (214, 222), (232, 243), (252, 262), (272, 280), (291, 300), (310, 320), (330, 338), (347, 361), (367, 396), (408, 416), (441, 454), (464, 473), (476, 492), (498, 505), (519, 531), (541, 552), (576, 609), (616, 624), (630, 643), (672, 757), (760, 775), (780, 800), (806, 1133)] stack_y0=94 stack_y1=1137
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1111, 562, 3)
+cam152_mode=True shape=(1111, 562, 3)
+[pick_range] img=(1111, 562) dark_thr=124 min_dark_run=98 min_stack_y=111 ranges=[(126, 151), (166, 176), (187, 195), (205, 216), (225, 235), (265, 274), (284, 293), (322, 335), (341, 355), (361, 370), (381, 390), (414, 428), (449, 465), (470, 479), (491, 505), (513, 525), (548, 582), (589, 618), (641, 749), (752, 773), (778, 1032), (1034, 1050), (1054, 1101)] stack_y0=106 stack_y1=1110
+_handle_tube_detection_preview called
+image_name=cam_152.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1009, 507, 3)
+cam152_mode=True shape=(1009, 507, 3)
+[pick_range] img=(1009, 507) dark_thr=156 min_dark_run=72 min_stack_y=101 ranges=[(101, 110), (547, 1008)] stack_y0=81 stack_y1=1008
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1149, 1997, 3)
+cam152_mode=True shape=(1149, 1997, 3)
+[pick_range] img=(1149, 1997) dark_thr=123 min_dark_run=270 min_stack_y=115 ranges=[(127, 145), (167, 192), (202, 217), (245, 279), (363, 410), (424, 441), (452, 474), (481, 519), (529, 549), (552, 565), (586, 658), (680, 1144)] stack_y0=107 stack_y1=1148
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1124, 1381, 3)
+cam152_mode=True shape=(1124, 1381, 3)
+[pick_range] img=(1124, 1381) dark_thr=145 min_dark_run=164 min_stack_y=112 ranges=[(112, 128), (139, 189), (201, 209), (219, 230), (239, 248), (260, 267), (278, 287), (298, 306), (317, 324), (335, 347), (354, 383), (394, 403), (427, 441), (451, 478), (505, 518), (528, 538), (563, 595), (603, 611), (616, 630), (656, 743), (747, 760), (767, 786), (792, 1118)] stack_y0=92 stack_y1=1123
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1102, 623, 3)
+cam152_mode=True shape=(1102, 623, 3)
+[pick_range] img=(1102, 623) dark_thr=124 min_dark_run=104 min_stack_y=110 ranges=[(117, 142), (158, 168), (179, 187), (197, 208), (217, 227), (256, 265), (276, 285), (296, 303), (313, 326), (333, 347), (352, 361), (372, 381), (405, 419), (429, 437), (440, 457), (461, 471), (481, 497), (505, 516), (538, 573), (581, 609), (632, 740), (743, 764), (770, 1041), (1045, 1092)] stack_y0=97 stack_y1=1101
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1102, 583, 3)
+cam152_mode=True shape=(1102, 583, 3)
+[pick_range] img=(1102, 583) dark_thr=126 min_dark_run=100 min_stack_y=110 ranges=[(117, 142), (157, 168), (178, 186), (197, 208), (217, 227), (256, 265), (275, 284), (295, 302), (313, 326), (332, 347), (351, 361), (372, 381), (405, 419), (441, 457), (461, 470), (482, 496), (504, 516), (539, 573), (581, 609), (632, 739), (743, 764), (770, 1041), (1045, 1092)] stack_y0=97 stack_y1=1101
+_handle_tube_detection_preview called
+image_name=cam_151_202604022.jpeg
+detection_roi=None cam152_mode=False warp_shape=(1149, 789, 3)
+cam152_mode=False shape=(1149, 789, 3)
+_handle_tube_detection_preview called
+image_name=cam_152_202604022.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1170, 565, 3)
+cam152_mode=True shape=(1170, 565, 3)
+[pick_range] img=(1170, 565) dark_thr=159 min_dark_run=58 min_stack_y=117 ranges=[(117, 139), (313, 327), (332, 346), (351, 365), (369, 385), (389, 404), (408, 423), (428, 443), (448, 462), (467, 481), (486, 501), (504, 519), (524, 539), (544, 558), (563, 577), (581, 596), (601, 634), (637, 653), (656, 672), (675, 691), (696, 710), (715, 729), (733, 748), (751, 767), (771, 787), (790, 826), (829, 844), (846, 864), (866, 884), (888, 902), (905, 940), (942, 1017), (1020, 1165)] stack_y0=97 stack_y1=1169
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1149, 1997, 3)
+cam152_mode=True shape=(1149, 1997, 3)
+[pick_range] img=(1149, 1997) dark_thr=123 min_dark_run=270 min_stack_y=115 ranges=[(127, 145), (167, 192), (202, 217), (245, 279), (363, 410), (424, 441), (452, 474), (481, 519), (529, 549), (552, 565), (586, 658), (680, 1144)] stack_y0=107 stack_y1=1148
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1106, 1345, 3)
+cam152_mode=True shape=(1106, 1345, 3)
+[pick_range] img=(1106, 1345) dark_thr=146 min_dark_run=152 min_stack_y=111 ranges=[(119, 171), (182, 190), (200, 210), (220, 230), (240, 248), (259, 268), (279, 288), (298, 306), (315, 328), (335, 364), (376, 384), (409, 422), (432, 441), (444, 459), (486, 499), (509, 519), (544, 577), (584, 592), (598, 611), (640, 725), (729, 742), (748, 768), (774, 1101)] stack_y0=99 stack_y1=1105
+_handle_tube_detection_preview called
+image_name=cam_152_202604021.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1140, 427, 3)
+cam152_mode=True shape=(1140, 427, 3)
+[pick_range] img=(1140, 427) dark_thr=114 min_dark_run=76 min_stack_y=114 ranges=[(114, 125), (155, 170), (195, 205), (216, 224), (234, 245), (254, 264), (293, 303), (313, 322), (351, 363), (370, 383), (390, 399), (409, 419), (442, 457), (466, 474), (477, 494), (499, 508), (519, 534), (542, 553), (575, 610), (618, 648), (652, 661), (669, 776), (781, 802), (807, 1061), (1063, 1079), (1083, 1130)] stack_y0=94 stack_y1=1139
+_handle_tube_detection_preview called
+image_name=cam_151_202604022.jpeg
+detection_roi=None cam152_mode=False warp_shape=(1149, 789, 3)
+cam152_mode=False shape=(1149, 789, 3)
+_handle_tube_detection_preview called
+image_name=cam_152_202604022.jpeg
+detection_roi=None cam152_mode=True warp_shape=(1140, 485, 3)
+cam152_mode=True shape=(1140, 485, 3)
+[pick_range] img=(1140, 485) dark_thr=152 min_dark_run=62 min_stack_y=114 ranges=[(279, 292), (298, 312), (317, 331), (335, 351), (356, 370), (374, 389), (394, 409), (414, 428), (433, 447), (452, 467), (470, 485), (490, 505), (510, 524), (529, 542), (547, 562), (567, 599), (604, 619), (623, 637), (642, 657), (662, 676), (681, 695), (699, 714), (718, 733), (737, 752), (756, 772), (775, 791), (795, 810), (813, 829), (832, 849), (854, 867), (871, 888), (890, 906), (908, 925), (928, 944), (946, 963), (966, 982), (987, 1001), (1004, 1022), (1024, 1128)] stack_y0=259 stack_y1=1139
+_handle_tube_detection_preview called
+image_name=cam_151_202604022.jpeg
+detection_roi=None cam152_mode=False warp_shape=(1159, 749, 3)
+cam152_mode=False shape=(1159, 749, 3)
+detection_roi=None cam152_mode=False warp_shape=(1140, 572, 3)
+cam152_mode=False shape=(1140, 572, 3)
+detection_roi=None cam152_mode=True warp_shape=(1140, 485, 3)
+cam152_mode=True shape=(1140, 485, 3)
+[pick_range] img=(1140, 485) dark_thr=152 min_dark_run=62 min_stack_y=114 ranges=[(279, 292), (298, 312), (317, 331), (335, 351), (356, 370), (374, 389), (394, 409), (414, 428), (433, 447), (452, 467), (470, 485), (490, 505), (510, 524), (529, 542), (547, 562), (567, 599), (604, 619), (623, 637), (642, 657), (662, 676), (681, 695), (699, 714), (718, 733), (737, 752), (756, 772), (775, 791), (795, 810), (813, 829), (832, 849), (854, 867), (871, 888), (890, 906), (908, 925), (928, 944), (946, 963), (966, 982), (987, 1001), (1004, 1022), (1024, 1128)] stack_y0=259 stack_y1=1139
+detection_roi=None cam152_mode=False warp_shape=(1140, 572, 3)
+cam152_mode=False shape=(1140, 572, 3)
+detection_roi=None cam152_mode=True warp_shape=(956, 659, 3)
+cam152_mode=True shape=(956, 659, 3)
+[pick_range] img=(956, 659) dark_thr=149 min_dark_run=104 min_stack_y=96 ranges=[(217, 229), (234, 246), (250, 262), (265, 280), (283, 296), (299, 312), (316, 329), (333, 345), (350, 362), (366, 379), (381, 395), (399, 412), (416, 428), (432, 444), (447, 461), (465, 493), (497, 510), (512, 526), (529, 543), (547, 560), (562, 576), (579, 592), (595, 608), (611, 625), (628, 659), (662, 691), (693, 708), (712, 724), (727, 742), (745, 823), (828, 857), (860, 950)] stack_y0=197 stack_y1=955

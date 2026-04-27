@@ -20,6 +20,7 @@ class HomographyPreviewResult:
     dst_rect: tuple[float, float, float, float]
     homography_matrix: list[list[float]]
     inverse_homography_matrix: list[list[float]]
+    source_size: tuple[int, int] = (0, 0)
 
 
 def _label_key(value: str | None) -> str:
@@ -216,6 +217,12 @@ def _has_primary_parallel_guide_refs(points: list[dict], lines: list[dict]) -> b
 
     line_labels = {_label_key(line.get("label")) for line in lines}
     return "top_ref" in line_labels and ("bottom_horrizontal" in line_labels or "bottom_horizontal" in line_labels)
+
+
+def _has_corner_quad_refs(points: list[dict]) -> bool:
+    needed_points = {"top_01", "top_02", "base_01", "base_02"}
+    present_points = {_label_key(point.get("label")) for point in points}
+    return needed_points.issubset(present_points)
 
 
 def _select_vertical_side_guides(
@@ -470,6 +477,37 @@ def _build_from_secondary_parallel_guides(
     return src_points, labels, debug
 
 
+def _build_from_corner_quad_points(points: list[dict]) -> tuple[list[tuple[float, float]], list[str], dict]:
+    top_left_point = _find_point_by_label(points, "top_01")
+    top_right_point = _find_point_by_label(points, "top_02")
+    bottom_left_point = _find_point_by_label(points, "base_01")
+    bottom_right_point = _find_point_by_label(points, "base_02")
+    if not all([top_left_point, top_right_point, bottom_left_point, bottom_right_point]):
+        raise ValueError("Faltan puntos etiquetados: top_01, top_02, base_01 y base_02.")
+
+    top_left = _point_xy(top_left_point)
+    top_right = _point_xy(top_right_point)
+    bottom_left = _point_xy(bottom_left_point)
+    bottom_right = _point_xy(bottom_right_point)
+    src_points = [top_left, top_right, bottom_left, bottom_right]
+    _validate_quad(src_points)
+
+    debug = {
+        "top_ref": (top_left, top_right),
+        "bottom_ref": (bottom_left, bottom_right),
+        "left_side": (top_left, bottom_left),
+        "right_side": (top_right, bottom_right),
+        "anchor_points": [
+            ("top_01", top_left),
+            ("top_02", top_right),
+            ("base_01", bottom_left),
+            ("base_02", bottom_right),
+        ],
+    }
+    labels = ["top_01->top_02", "base_01->base_02", "top_01->base_01", "top_02->base_02"]
+    return src_points, labels, debug
+
+
 def _build_from_horizontal_lines(lines: list[dict]) -> tuple[list[tuple[float, float]], list[str], dict]:
     top_line, bottom_line = _pick_horizontal_refs(lines)
     top_left, top_right = _sorted_endpoints(top_line)
@@ -496,6 +534,9 @@ def build_homography_preview(
     warp_padding: dict | None = None,
     src_points_override: list | None = None,
     dst_rect_override: list | tuple | dict | None = None,
+    *,
+    flip_horizontal: bool = False,
+    output_flip_horizontal: bool = False,
 ) -> HomographyPreviewResult:
     image_path = Path(image_path)
     output_dir = Path(output_dir)
@@ -505,14 +546,27 @@ def build_homography_preview(
     if image_bgr is None:
         raise FileNotFoundError(f"Cannot read image: {image_path}")
 
+    source_size = (image_bgr.shape[1], image_bgr.shape[0])
+
+    if flip_horizontal:
+        image_bgr = cv2.flip(image_bgr, 1)
+        W = source_size[0]
+        if src_points_override is not None:
+            src_points_override = [[W - 1 - float(x), float(y)] for x, y in src_points_override]
+        if points:
+            points = [dict(p, x=int(W - 1 - int(p.get("x", 0)))) for p in points]
+        lines = [dict(ln, x1=int(W - 1 - int(ln.get("x1", 0))), x2=int(W - 1 - int(ln.get("x2", 0)))) for ln in lines]
+
     normalized_lines = [_normalize_line(line) for line in lines]
     normalized_points = [_normalize_point(point) for point in (points or [])]
     padding = _normalize_padding(warp_padding)
     override_points = _normalize_src_points_override(src_points_override)
     override_rect = _normalize_dst_rect_override(dst_rect_override)
+    exact_quad_points = False
 
     if override_points is not None:
         computed_src_points = override_points
+        exact_quad_points = True
         top_left, top_right, bottom_left, bottom_right = computed_src_points
         used_labels = ["TL/TR", "BL/BR", "TL->BL", "TR->BR"]
         debug = {
@@ -527,6 +581,9 @@ def build_homography_preview(
                 ("BR", bottom_right),
             ],
         }
+    elif _has_corner_quad_refs(normalized_points):
+        computed_src_points, used_labels, debug = _build_from_corner_quad_points(normalized_points)
+        exact_quad_points = True
     elif _has_secondary_parallel_guide_refs(normalized_points, normalized_lines):
         computed_src_points, used_labels, debug = _build_from_secondary_parallel_guides(normalized_points, normalized_lines)
     elif _has_primary_parallel_guide_refs(normalized_points, normalized_lines):
@@ -545,10 +602,10 @@ def build_homography_preview(
 
     base_width = max(240, int(round(max(top_width, bottom_width))))
     base_height = max(320, int(round(max(left_height, right_height))))
-    if override_points is None:
-        padding = _apply_default_padding(padding, base_width, base_height)
-    else:
+    if exact_quad_points:
         padding = {"left": 0, "right": 0, "top": 0, "bottom": 0}
+    else:
+        padding = _apply_default_padding(padding, base_width, base_height)
     base_dst_points = np.float32(
         [
             [0, 0],
@@ -561,15 +618,15 @@ def build_homography_preview(
     base_inverse_transform = np.linalg.inv(base_transform)
 
     if override_rect is None:
-        if override_points is None:
+        if exact_quad_points:
+            dst_rect = (0.0, 0.0, float(base_width - 1), float(base_height - 1))
+        else:
             dst_rect = (
                 float(-padding["left"]),
                 float(-padding["top"]),
                 float(base_width - 1 + padding["right"]),
                 float(base_height - 1 + padding["bottom"]),
             )
-        else:
-            dst_rect = (0.0, 0.0, float(base_width - 1), float(base_height - 1))
     else:
         dst_rect = override_rect
 
@@ -588,6 +645,15 @@ def build_homography_preview(
         ]
     )
     final_transform = cv2.getPerspectiveTransform(np.float32(src_points), dst_points)
+    if output_flip_horizontal:
+        output_flip = np.float32(
+            [
+                [-1.0, 0.0, float(out_width - 1)],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ]
+        )
+        final_transform = output_flip @ final_transform
     warp = cv2.warpPerspective(image_bgr, final_transform, (out_width, out_height))
 
     overlay = image_bgr.copy()
@@ -657,4 +723,5 @@ def build_homography_preview(
         dst_rect=dst_rect,
         homography_matrix=base_transform.tolist(),
         inverse_homography_matrix=base_inverse_transform.tolist(),
+        source_size=source_size,
     )

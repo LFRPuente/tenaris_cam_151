@@ -1,0 +1,107 @@
+image_name = "cam_151_202604022.jpeg"
+updated_at = "2026-04-22T00:00:00"
+overview_path = ""
+src_points_override = [[766.892, 51.775], [896.457, 46.92], [628.119, 1125.15], [995.894, 1115.526]]
+dst_rect_override = [-65.593, -46.177, 506.277, 1093.589]
+
+[[points]]
+id = "point_01"
+kind = "tube_top"
+label = "top_01"
+x = 771
+y = 30
+roi_id = ""
+note = ""
+
+[[points]]
+id = "point_02"
+kind = "tube_top"
+label = "top_02"
+x = 851
+y = 27
+roi_id = ""
+note = ""
+
+[[points]]
+id = "point_03"
+kind = "tube_base"
+label = "base_01"
+x = 608
+y = 1151
+roi_id = ""
+note = ""
+
+[[points]]
+id = "point_04"
+kind = "tube_base"
+label = "base_02"
+x = 782
+y = 1148
+roi_id = ""
+note = ""
+
+[[points]]
+id = "point_05"
+kind = "mark"
+label = "mark_02"
+x = 827
+y = 64
+roi_id = ""
+note = ""
+
+[[points]]
+id = "point_06"
+kind = "mark"
+label = "mark_03"
+x = 799
+y = 1134
+roi_id = ""
+note = ""
+
+[[lines]]
+id = "line_01"
+kind = "horizontal_ref"
+label = "horiz_01"
+x1 = 744
+y1 = 99
+x2 = 851
+y2 = 91
+roi_id = ""
+note = ""
+
+[[lines]]
+id = "line_02"
+kind = "horizontal_ref"
+label = "horiz_02"
+x1 = 471
+y1 = 1141
+x2 = 997
+y2 = 1134
+roi_id = ""
+note = ""
+
+[[lines]]
+id = "line_03"
+kind = "warp_scale_ref"
+label = "wscale_01"
+x1 = 64
+y1 = 1127
+x2 = 221
+y2 = 1127
+roi_id = ""
+note = ""
+real_distance = 38.75
+coordinate_space = "warp"
+
+[[lines]]
+id = "line_04"
+kind = "warp_scale_ref"
+label = "wscale_02"
+x1 = 237
+y1 = 1127
+x2 = 432
+y2 = 1127
+roi_id = ""
+note = ""
+real_distance = 47.75
+coordinate_space = "warp"

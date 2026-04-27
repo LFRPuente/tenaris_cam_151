@@ -12,7 +12,7 @@
   fitScale: 1,
   zoom: 1,
   minZoom: 0.35,
-  maxZoom: 16,
+  maxZoom: 64,
   offsetX: 0,
   offsetY: 0,
   draft: null,
@@ -26,6 +26,7 @@
   srcPointsOverride: null,
   dstRectOverride: null,
   overlayPreviewDrag: null,
+  warpScalePending: null,
   previewRect: null,
   previewHomographyMatrix: null,
   previewInverseHomographyMatrix: null,
@@ -44,6 +45,7 @@ const LINE_KIND_META = {
   vertical_ref: { color: "#ff7878", short: "vref" },
   tube_axis: { color: "#ffb48f", short: "axis" },
   custom: { color: "#98ffab", short: "line" },
+  warp_scale_ref: { color: "#ffd700", short: "wscale" },
 };
 
 const imageSelect = document.getElementById("imageSelect");
@@ -92,6 +94,8 @@ const previewOverlayViewport = document.getElementById("previewOverlayViewport")
 const previewOverlayCanvas = document.getElementById("previewOverlayCanvas");
 const previewOverlayCtx = previewOverlayCanvas.getContext("2d");
 const previewWarpViewport = document.getElementById("previewWarpViewport");
+const previewWarpCanvas = document.getElementById("previewWarpCanvas");
+const previewWarpCtx = previewWarpCanvas.getContext("2d");
 const previewOverlayImg = document.getElementById("previewOverlayImg");
 const previewWarpImg = document.getElementById("previewWarpImg");
 const previewViewers = {
@@ -174,6 +178,9 @@ function applyPreviewTransform(viewer) {
   if (viewer === previewViewers.overlay) {
     drawHomographyQuadOverlay();
   }
+  if (viewer === previewViewers.warp) {
+    drawWarpScaleLines();
+  }
 }
 
 function resetPreviewViewer(viewer) {
@@ -214,6 +221,10 @@ function clearPreviewViewer(viewer) {
   if (viewer === previewViewers.overlay) {
     resizePreviewOverlayCanvas();
     previewOverlayCtx.clearRect(0, 0, previewOverlayCanvas.width, previewOverlayCanvas.height);
+  }
+  if (viewer === previewViewers.warp) {
+    resizePreviewWarpCanvas();
+    previewWarpCtx.clearRect(0, 0, previewWarpCanvas.width, previewWarpCanvas.height);
   }
 }
 
@@ -315,6 +326,16 @@ function imagePointToOverlayCanvas(point) {
   };
 }
 
+function overlayClientToCanvas(clientX, clientY) {
+  const rect = previewOverlayCanvas.getBoundingClientRect();
+  const canvasScaleX = previewOverlayCanvas.width / Math.max(1, rect.width);
+  const canvasScaleY = previewOverlayCanvas.height / Math.max(1, rect.height);
+  return {
+    x: (clientX - rect.left) * canvasScaleX,
+    y: (clientY - rect.top) * canvasScaleY,
+  };
+}
+
 function overlayCanvasToImagePoint(canvasX, canvasY) {
   const viewer = previewViewers.overlay;
   const scale = getOverlayImageScale();
@@ -322,6 +343,92 @@ function overlayCanvasToImagePoint(canvasX, canvasY) {
     x: (canvasX - viewer.offsetX) / (scale * viewer.zoom),
     y: (canvasY - viewer.offsetY) / (scale * viewer.zoom),
   };
+}
+
+function getWarpImageScale() {
+  const viewer = previewViewers.warp;
+  if (!viewer.baseWidth || !previewWarpImg.naturalWidth) {
+    return 1;
+  }
+  return viewer.baseWidth / previewWarpImg.naturalWidth;
+}
+
+function warpViewportToImagePoint(clientX, clientY) {
+  const viewer = previewViewers.warp;
+  const rect = previewWarpCanvas.getBoundingClientRect();
+  const scale = getWarpImageScale();
+  const canvasX = clientX - rect.left;
+  const canvasY = clientY - rect.top;
+  return {
+    x: Math.round((canvasX - viewer.offsetX) / (scale * viewer.zoom)),
+    y: Math.round((canvasY - viewer.offsetY) / (scale * viewer.zoom)),
+  };
+}
+
+function imagePointToWarpCanvas(imgX, imgY) {
+  const viewer = previewViewers.warp;
+  const scale = getWarpImageScale();
+  return {
+    x: viewer.offsetX + imgX * scale * viewer.zoom,
+    y: viewer.offsetY + imgY * scale * viewer.zoom,
+  };
+}
+
+function resizePreviewWarpCanvas() {
+  const rect = previewWarpViewport.getBoundingClientRect();
+  previewWarpCanvas.width = Math.max(1, Math.round(rect.width));
+  previewWarpCanvas.height = Math.max(1, Math.round(rect.height));
+}
+
+function drawWarpScaleLines() {
+  resizePreviewWarpCanvas();
+  previewWarpCtx.clearRect(0, 0, previewWarpCanvas.width, previewWarpCanvas.height);
+
+  if (!hasPreviewImage(previewViewers.warp)) {
+    return;
+  }
+
+  const color = LINE_KIND_META.warp_scale_ref.color;
+
+  // Draw already-placed warp_scale_ref lines
+  state.lines.forEach((line, index) => {
+    if (line.kind !== "warp_scale_ref") return;
+    const p1 = imagePointToWarpCanvas(line.x1, line.y1);
+    const p2 = imagePointToWarpCanvas(line.x2, line.y2);
+    const isSelected = state.selected.type === "line" && state.selected.index === index;
+    previewWarpCtx.strokeStyle = isSelected ? "#ffffff" : color;
+    previewWarpCtx.lineWidth = isSelected ? 2 : 1.5;
+    previewWarpCtx.setLineDash([]);
+    previewWarpCtx.beginPath();
+    previewWarpCtx.moveTo(p1.x, p1.y);
+    previewWarpCtx.lineTo(p2.x, p2.y);
+    previewWarpCtx.stroke();
+    // tick marks
+    for (const p of [p1, p2]) {
+      previewWarpCtx.beginPath();
+      previewWarpCtx.moveTo(p.x, p.y - 6);
+      previewWarpCtx.lineTo(p.x, p.y + 6);
+      previewWarpCtx.stroke();
+    }
+    // label
+    const label = line.label || `wscale_${String(index + 1).padStart(2, "0")}`;
+    const dist = line.realDistance != null ? ` ${line.realDistance}"` : "";
+    previewWarpCtx.fillStyle = color;
+    previewWarpCtx.font = '700 12px "Space Grotesk", sans-serif';
+    previewWarpCtx.fillText(`${label}${dist}`, (p1.x + p2.x) / 2 - 20, (p1.y + p2.y) / 2 - 8);
+  });
+
+  // Draw pending line while user is placing second point
+  if (state.warpScalePending) {
+    const p1 = imagePointToWarpCanvas(state.warpScalePending.x, state.warpScalePending.y);
+    previewWarpCtx.strokeStyle = color;
+    previewWarpCtx.lineWidth = 1.5;
+    previewWarpCtx.setLineDash([5, 3]);
+    previewWarpCtx.beginPath();
+    previewWarpCtx.arc(p1.x, p1.y, 5, 0, Math.PI * 2);
+    previewWarpCtx.stroke();
+    previewWarpCtx.setLineDash([]);
+  }
 }
 
 function applyHomography(matrix, point) {
@@ -477,9 +584,7 @@ function hitTestHomographyHandle(clientX, clientY) {
     return null;
   }
 
-  const rect = previewOverlayCanvas.getBoundingClientRect();
-  const x = clientX - rect.left;
-  const y = clientY - rect.top;
+  const { x, y } = overlayClientToCanvas(clientX, clientY);
   let best = null;
 
   const quad = getHomographyQuadCanvasPoints();
@@ -503,8 +608,7 @@ function hitTestHomographyEdge(clientX, clientY) {
     return null;
   }
 
-  const rect = previewOverlayCanvas.getBoundingClientRect();
-  const point = { x: clientX - rect.left, y: clientY - rect.top };
+  const point = overlayClientToCanvas(clientX, clientY);
   const edges = [
     { name: "top", start: quad.tl, end: quad.tr },
     { name: "right", start: quad.tr, end: quad.br },
@@ -527,8 +631,7 @@ function isInsideHomographyQuad(clientX, clientY) {
   if (!quad) {
     return false;
   }
-  const rect = previewOverlayCanvas.getBoundingClientRect();
-  const point = { x: clientX - rect.left, y: clientY - rect.top };
+  const point = overlayClientToCanvas(clientX, clientY);
   return pointInPolygon(point, quad.ordered);
 }
 
@@ -651,8 +754,8 @@ function bindOverlayQuadEditor() {
     }
 
     if (isInsideHomographyQuad(event.clientX, event.clientY)) {
-      const rect = previewOverlayCanvas.getBoundingClientRect();
-      const imagePoint = overlayCanvasToImagePoint(event.clientX - rect.left, event.clientY - rect.top);
+      const canvasPoint = overlayClientToCanvas(event.clientX, event.clientY);
+      const imagePoint = overlayCanvasToImagePoint(canvasPoint.x, canvasPoint.y);
       const startDstPoint = applyHomography(state.previewHomographyMatrix, imagePoint);
       state.overlayPreviewDrag = {
         mode: "move",
@@ -689,8 +792,8 @@ function bindOverlayQuadEditor() {
       return;
     }
 
-    const rect = previewOverlayCanvas.getBoundingClientRect();
-    const nextPoint = overlayCanvasToImagePoint(event.clientX - rect.left, event.clientY - rect.top);
+    const canvasPoint = overlayClientToCanvas(event.clientX, event.clientY);
+    const nextPoint = overlayCanvasToImagePoint(canvasPoint.x, canvasPoint.y);
     let updated = false;
     if (drag.mode === "handle") {
       updated = updatePreviewRectHandle(drag.index, nextPoint);
@@ -909,6 +1012,7 @@ function normalizeLine(line) {
     roiIndex: roiIndexFromId(line.roi_id),
     note: typeof line.note === "string" ? line.note : "",
     realDistance: parseRealDistance(line.real_distance ?? line.realDistance),
+    coordinateSpace: typeof line.coordinate_space === "string" ? line.coordinate_space : (line.coordinateSpace || ""),
   };
 }
 
@@ -933,11 +1037,38 @@ function normalizeDstRectOverride(rect) {
   return normalized.every((value) => Number.isFinite(value)) ? normalized : null;
 }
 
+function labelKey(value) {
+  return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function pointByLabel(label) {
+  const wanted = labelKey(label);
+  return state.points.find((point) => labelKey(point.label) === wanted) || null;
+}
+
+function cornerQuadSrcPoints() {
+  const labels = ["top_01", "top_02", "base_01", "base_02"];
+  const points = labels.map((label) => pointByLabel(label));
+  if (points.some((point) => !point)) {
+    return null;
+  }
+  return normalizeSrcPointsOverride(points);
+}
+
 function currentHomographySrcPoints() {
-  if (Array.isArray(state.homographyQuad) && state.homographyQuad.length === 4) {
-    return normalizeSrcPointsOverride(state.homographyQuad);
+  const cornerPoints = cornerQuadSrcPoints();
+  if (cornerPoints) {
+    return cornerPoints;
   }
   return normalizeSrcPointsOverride(state.srcPointsOverride);
+}
+
+function currentDstRectOverride(srcPointsOverride) {
+  if (Array.isArray(state.previewRect)) {
+    return state.previewRect;
+  }
+  const hasCornerPoints = Boolean(cornerQuadSrcPoints());
+  return srcPointsOverride && !hasCornerPoints ? null : state.dstRectOverride;
 }
 
 function clampOffset() {
@@ -980,8 +1111,10 @@ function fitImage(resetZoom = false) {
 
 function pointerToImage(event) {
   const rect = roiCanvas.getBoundingClientRect();
-  const canvasX = event.clientX - rect.left;
-  const canvasY = event.clientY - rect.top;
+  const canvasScaleX = roiCanvas.width / Math.max(1, rect.width);
+  const canvasScaleY = roiCanvas.height / Math.max(1, rect.height);
+  const canvasX = (event.clientX - rect.left) * canvasScaleX;
+  const canvasY = (event.clientY - rect.top) * canvasScaleY;
   const viewScale = getViewScale();
   return [
     Math.max(0, Math.min(state.image.width, (canvasX - state.offsetX) / viewScale)),
@@ -1152,6 +1285,7 @@ function drawCanvas() {
   });
 
   state.lines.forEach((line, index) => {
+    if (line.kind === "warp_scale_ref") return; // drawn on warp canvas instead
     drawLineAnnotation(line, index, state.selected.type === "line" && state.selected.index === index);
   });
 
@@ -1176,7 +1310,7 @@ function drawCanvas() {
     roiCtx.fillText(label, px + 12, py - 10);
   });
 
-  if (state.pendingLineStart) {
+  if (state.pendingLineStart && state.lineKind !== "warp_scale_ref") {
     const hover = state.pendingLineHover || state.pendingLineStart;
     const previewLine = normalizeLine({
       kind: state.lineKind,
@@ -1246,6 +1380,7 @@ function rerenderAllAnnotations() {
   renderRoiList();
   renderPointList();
   renderLineList();
+  drawWarpScaleLines();
   renderSelection();
   drawCanvas();
   updateDashboard();
@@ -1350,6 +1485,7 @@ function renderLineList() {
           renderPointList();
           renderLineList();
           drawCanvas();
+          drawWarpScaleLines();
           updateDashboard();
         },
       ),
@@ -1561,6 +1697,7 @@ function serializeLines() {
     roi_id: roiIdFromIndex(line.roiIndex),
     note: line.note || "",
     real_distance: line.realDistance,
+    coordinate_space: line.coordinateSpace || undefined,
   }));
 }
 
@@ -1575,7 +1712,7 @@ function buildTomlExport() {
     lines.push(`src_points_override = [${pointsText}]`);
   }
 
-  const dstRectOverride = srcPointsOverride ? null : Array.isArray(state.previewRect) ? state.previewRect : state.dstRectOverride;
+  const dstRectOverride = currentDstRectOverride(srcPointsOverride);
   if (Array.isArray(dstRectOverride) && dstRectOverride.length === 4) {
     lines.push(`dst_rect_override = [${dstRectOverride.map((value) => Number(value).toFixed(3).replace(/\.000$/, "")).join(", ")}]`);
   }
@@ -1614,6 +1751,9 @@ function buildTomlExport() {
     lines.push(`note = ${JSON.stringify(line.note || "")}`);
     if (line.real_distance != null) {
       lines.push(`real_distance = ${Number(line.real_distance)}`);
+    }
+    if (line.coordinate_space) {
+      lines.push(`coordinate_space = ${JSON.stringify(line.coordinate_space)}`);
     }
   });
 
@@ -1681,6 +1821,8 @@ async function saveAnnotations() {
   }
 
   setStatus(`Saving ${state.rois.length} ROIs, ${state.points.length} points and ${state.lines.length} lines...`);
+  const srcPointsOverride = currentHomographySrcPoints();
+  const dstRectOverride = currentDstRectOverride(srcPointsOverride);
   const payload = await fetchJson("/api/rois", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1689,12 +1831,8 @@ async function saveAnnotations() {
       rois: serializeRois(),
       points: serializePoints(),
       lines: serializeLines(),
-      src_points_override: currentHomographySrcPoints(),
-      dst_rect_override: currentHomographySrcPoints()
-        ? null
-        : Array.isArray(state.previewRect)
-          ? state.previewRect
-          : state.dstRectOverride,
+      src_points_override: srcPointsOverride,
+      dst_rect_override: dstRectOverride,
     }),
   });
 
@@ -1709,17 +1847,14 @@ async function saveAnnotations() {
 
 function currentAnnotationsPayload(imageName = state.imageName) {
   const srcPointsOverride = currentHomographySrcPoints();
+  const dstRectOverride = currentDstRectOverride(srcPointsOverride);
   return {
     image_name: imageName,
     rois: serializeRois(),
     points: serializePoints(),
     lines: serializeLines(),
     src_points_override: srcPointsOverride,
-    dst_rect_override: srcPointsOverride
-      ? null
-      : Array.isArray(state.previewRect)
-        ? state.previewRect
-        : state.dstRectOverride,
+    dst_rect_override: dstRectOverride,
   };
 }
 
@@ -1807,7 +1942,13 @@ async function previewTubeDetection() {
   const scaleText =
     data.px_per_in == null ? "scale=-" : `scale=${Number(data.px_per_in).toFixed(2)}px/in`;
   const refText = Array.isArray(data.reference_lines) ? `refs=${data.reference_lines.length}` : "refs=0";
-  previewMeta.textContent += ` | tubos=${data.tube_count ?? 0} | ${periodText} | ${roiText} | ${scaleText} | ${refText}`;
+  const modeText = data.processing_mode ? `modo=${data.processing_mode}` : "modo=-";
+  const stageText = data.processing_stage ? `proceso=${data.processing_stage}` : "proceso=-";
+  const rejectedText =
+    Array.isArray(data.rejected_tube_gaps) && data.rejected_tube_gaps.length
+      ? `gaps rechazados=${data.rejected_tube_gaps.length}`
+      : "gaps rechazados=0";
+  previewMeta.textContent += ` | ${modeText} | ${stageText} | tubos=${data.tube_count ?? 0} | ${periodText} | ${roiText} | ${scaleText} | ${refText} | ${rejectedText}`;
   setStatus("Preview de tubos listo.");
 }
 
@@ -1933,6 +2074,12 @@ function createPointAt(x, y) {
 }
 
 function cancelPendingLine() {
+  if (state.warpScalePending) {
+    state.warpScalePending = null;
+    drawWarpScaleLines();
+    setStatus("Linea warp_scale_ref cancelada.");
+    return;
+  }
   if (!state.pendingLineStart) {
     return;
   }
@@ -2050,6 +2197,10 @@ roiCanvas.addEventListener("pointerdown", (event) => {
   }
 
   if (state.tool === "line") {
+    if (state.lineKind === "warp_scale_ref") {
+      setStatus("warp_scale_ref: haz click directamente en el panel Warp (derecha).");
+      return;
+    }
     if (state.pendingLineStart) {
       finishLineAt(x, y);
       return;
@@ -2200,8 +2351,10 @@ roiCanvas.addEventListener(
 
     event.preventDefault();
     const rect = roiCanvas.getBoundingClientRect();
-    const canvasX = event.clientX - rect.left;
-    const canvasY = event.clientY - rect.top;
+    const canvasScaleX = roiCanvas.width / Math.max(1, rect.width);
+    const canvasScaleY = roiCanvas.height / Math.max(1, rect.height);
+    const canvasX = (event.clientX - rect.left) * canvasScaleX;
+    const canvasY = (event.clientY - rect.top) * canvasScaleY;
     const [imageX, imageY] = pointerToImage(event);
     const factor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
     const nextZoom = Math.max(state.minZoom, Math.min(state.maxZoom, state.zoom * factor));
@@ -2296,6 +2449,7 @@ clearBtn.addEventListener("click", () => {
   state.selected = { type: null, index: null };
   state.pendingLineStart = null;
   state.pendingLineHover = null;
+  state.warpScalePending = null;
   rerenderAllAnnotations();
 });
 
@@ -2329,6 +2483,7 @@ selectedLabelInput.addEventListener("input", (event) => {
   renderSelection();
   renderLineList();
   drawCanvas();
+  drawWarpScaleLines();
   updateDashboard();
 });
 
@@ -2341,6 +2496,7 @@ selectedLineRealDistanceInput.addEventListener("input", (event) => {
   renderSelection();
   renderLineList();
   drawCanvas();
+  drawWarpScaleLines();
   updateDashboard();
 });
 
@@ -2424,6 +2580,131 @@ function imageUrlByName(name) {
   return found ? found.url : null;
 }
 
+function bindWarpScaleEditor() {
+  previewWarpCanvas.addEventListener(
+    "wheel",
+    (event) => {
+      if (!hasPreviewImage(previewViewers.warp)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      zoomPreviewViewer(previewViewers.warp, event.clientX, event.clientY, event.deltaY < 0 ? 1.12 : 1 / 1.12);
+    },
+    { passive: false },
+  );
+
+  previewWarpCanvas.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || !hasPreviewImage(previewViewers.warp)) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    // Drawing mode: line tool + warp_scale_ref kind
+    if (state.tool === "line" && state.lineKind === "warp_scale_ref") {
+      const pt = warpViewportToImagePoint(event.clientX, event.clientY);
+
+      // If not already drawing, check if clicking near an existing warp line → select it
+      if (!state.warpScalePending) {
+        const HIT_PX = 8;
+        const warpScale = getWarpImageScale() * previewViewers.warp.zoom;
+        const hitImgDist = HIT_PX / warpScale;
+        let hitIndex = null;
+        state.lines.forEach((line, idx) => {
+          if (line.kind !== "warp_scale_ref") return;
+          const cy = (line.y1 + line.y2) / 2;
+          const inXRange = pt.x >= Math.min(line.x1, line.x2) - hitImgDist && pt.x <= Math.max(line.x1, line.x2) + hitImgDist;
+          const inYRange = Math.abs(pt.y - cy) <= hitImgDist;
+          if (inXRange && inYRange) hitIndex = idx;
+        });
+        if (hitIndex !== null) {
+          state.selected = { type: "line", index: hitIndex };
+          renderSelection();
+          renderLineList();
+          drawCanvas();
+          drawWarpScaleLines();
+          updateDashboard();
+          setStatus("Linea seleccionada. Presiona Delete o el botón Eliminar para borrarla.");
+          return;
+        }
+      }
+
+      if (!state.warpScalePending) {
+        state.warpScalePending = pt;
+        drawWarpScaleLines();
+        setStatus("Primer punto fijado en warp. Haz segundo click para cerrar la linea.");
+      } else {
+        // Finish: enforce horizontal (same y as first point)
+        const x1 = state.warpScalePending.x;
+        const y1 = state.warpScalePending.y;
+        const x2 = pt.x;
+        const label = lineLabelInput.value.trim() || nextLineLabel("warp_scale_ref");
+        const realDist = parseRealDistance(lineRealDistanceInput?.value);
+        const len = Math.abs(x2 - x1);
+        if (len < 4) {
+          setStatus("Linea demasiado corta. Intenta de nuevo.");
+          state.warpScalePending = null;
+          drawWarpScaleLines();
+          return;
+        }
+        state.lines.push({
+          kind: "warp_scale_ref",
+          label,
+          x1: Math.min(x1, x2),
+          y1,
+          x2: Math.max(x1, x2),
+          y2: y1,
+          roiIndex: null,
+          note: "",
+          realDistance: realDist,
+          coordinateSpace: "warp",
+        });
+        state.warpScalePending = null;
+        state.selected = { type: "line", index: state.lines.length - 1 };
+        syncLineDraftLabel(true);
+        renderSelection();
+        renderLineList();
+        drawCanvas();
+        drawWarpScaleLines();
+        updateDashboard();
+        setStatus(`Linea warp_scale_ref creada. Recuerda poner la distancia real y guardar.`);
+      }
+      return;
+    }
+
+    // Pan mode when not drawing
+    previewViewers.warp.dragStart = [event.clientX, event.clientY];
+    previewViewers.warp.startOffset = [previewViewers.warp.offsetX, previewViewers.warp.offsetY];
+    previewViewers.warp.pointerId = event.pointerId;
+    previewWarpCanvas.setPointerCapture(event.pointerId);
+    previewWarpViewport.classList.add("dragging");
+  });
+
+  previewWarpCanvas.addEventListener("pointermove", (event) => {
+    const viewer = previewViewers.warp;
+    if (viewer.pointerId !== event.pointerId || !viewer.dragStart) return;
+    event.preventDefault();
+    viewer.offsetX = viewer.startOffset[0] + (event.clientX - viewer.dragStart[0]);
+    viewer.offsetY = viewer.startOffset[1] + (event.clientY - viewer.dragStart[1]);
+    applyPreviewTransform(viewer);
+  });
+
+  previewWarpCanvas.addEventListener("pointerup", (event) => {
+    const viewer = previewViewers.warp;
+    if (viewer.pointerId !== event.pointerId) return;
+    viewer.dragStart = null;
+    viewer.startOffset = null;
+    viewer.pointerId = null;
+    previewWarpCanvas.releasePointerCapture(event.pointerId);
+    previewWarpViewport.classList.remove("dragging");
+  });
+
+  previewWarpCanvas.addEventListener("pointercancel", (event) => {
+    const viewer = previewViewers.warp;
+    viewer.dragStart = null;
+    viewer.startOffset = null;
+    viewer.pointerId = null;
+    previewWarpViewport.classList.remove("dragging");
+  });
+}
+
 async function init() {
   try {
     selectedLabelInput.disabled = true;
@@ -2436,6 +2717,7 @@ async function init() {
     syncLineDraftLabel(true);
     Object.values(previewViewers).forEach(bindPreviewViewer);
     bindOverlayQuadEditor();
+    bindWarpScaleEditor();
     await loadImagesBootstrap();
     await loadImageAndAnnotations(state.imageName);
     setStatus("Ready. Usa ROI para contexto, Points para marcas y Lines para referencias horizontales o verticales.");

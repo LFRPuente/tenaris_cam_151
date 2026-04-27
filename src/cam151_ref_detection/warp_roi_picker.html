@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Warp ROI picker</title>
+<style>
+*{box-sizing:border-box}body{margin:0;height:100vh;display:grid;grid-template-columns:minmax(0,1fr)320px;grid-template-rows:56px minmax(0,1fr);font-family:Arial,Helvetica,sans-serif;background:#101216;color:#edf2f7}header{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;border-bottom:1px solid #2a3038;background:#171a20}h1{margin:0;font-size:17px;letter-spacing:0}.actions{display:flex;gap:8px;flex-wrap:wrap}button{border:1px solid #3a4450;border-radius:6px;background:#222832;color:#f5f7fa;padding:8px 11px;font-size:13px;cursor:pointer}button:hover{background:#2c3440}button.primary{border-color:#1f9d55;background:#1f7a46}button.danger{border-color:#9f3a3a;background:#6b2a2a}button:disabled{opacity:.45;cursor:not-allowed}main{min-width:0;min-height:0;display:grid;grid-template-rows:minmax(0,1fr)34px;background:#0d0f13}#stage{width:100%;height:100%;display:block;background:#0b0d10;touch-action:none;cursor:crosshair}#status{padding:8px 12px;border-top:1px solid #2a3038;background:#171a20;color:#d7dee8;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}aside{min-height:0;overflow:auto;border-left:1px solid #2a3038;background:#151920;padding:12px}.panel{border:1px solid #2c3440;border-radius:8px;background:#1b2028;padding:10px;margin-bottom:12px}.panel h2{margin:0 0 8px;font-size:13px;text-transform:uppercase;color:#9fb0c2;letter-spacing:0}.coords{font-size:13px;line-height:1.45;color:#d7dee8;overflow-wrap:anywhere}.help{margin:0;color:#b7c2ce;font-size:12px;line-height:1.45}@media(max-width:900px){body{grid-template-columns:1fr;grid-template-rows:auto minmax(65vh,1fr)auto}aside{border-left:0;border-top:1px solid #2a3038;max-height:35vh}header{align-items:flex-start;flex-direction:column}}
+</style>
+</head>
+<body>
+<header><h1>ROI sobre warp completo</h1><div class="actions"><button id="fitBtn">Centrar</button><button id="clearBtn">Limpiar</button><button id="cancelBtn" class="danger">Cancelar</button><button id="confirmBtn" class="primary" disabled>Confirmar</button></div></header>
+<main><canvas id="stage"></canvas><div id="status">Cargando warp...</div></main>
+<aside>
+<section class="panel"><h2>Rectangulo</h2><div id="coords" class="coords">Sin ROI.</div></section>
+<section class="panel"><h2>Controles</h2><p class="help">Arrastra con click izquierdo para dibujar el ROI. Si ya hay ROI, arrastrar dentro lo mueve. Rueda del mouse hace zoom. Shift, click medio o click derecho arrastra la imagen. Enter confirma, Esc cancela.</p></section>
+</aside>
+<script>
+const INITIAL=__INITIAL_STATE__;
+const stage=document.getElementById("stage"),ctx=stage.getContext("2d"),statusEl=document.getElementById("status"),coordsEl=document.getElementById("coords"),confirmBtn=document.getElementById("confirmBtn");
+const img=new Image();let drag=null,submitted=false;
+const state={rect:INITIAL.existing,zoom:1,offsetX:0,offsetY:0,fitted:false};
+function canvasPoint(e){const r=stage.getBoundingClientRect();return{x:e.clientX-r.left,y:e.clientY-r.top};}
+function i2c(p){return{x:p.x*state.zoom+state.offsetX,y:p.y*state.zoom+state.offsetY};}
+function c2i(p){return{x:(p.x-state.offsetX)/state.zoom,y:(p.y-state.offsetY)/state.zoom};}
+function normRect(a,b){let x0=Math.max(0,Math.min(img.naturalWidth,a.x)),x1=Math.max(0,Math.min(img.naturalWidth,b.x)),y0=Math.max(0,Math.min(img.naturalHeight,a.y)),y1=Math.max(0,Math.min(img.naturalHeight,b.y));if(x0>x1)[x0,x1]=[x1,x0];if(y0>y1)[y0,y1]=[y1,y0];return[x0,y0,x1,y1];}
+function rectValid(r){return Array.isArray(r)&&r[2]-r[0]>=5&&r[3]-r[1]>=5;}
+function setStatus(t){statusEl.textContent=t;}
+function fitImage(){if(!img.naturalWidth||!stage.width||!stage.height)return;const s=Math.min(stage.width/img.naturalWidth,stage.height/img.naturalHeight,1);state.zoom=Math.max(.02,s);state.offsetX=(stage.width-img.naturalWidth*state.zoom)/2;state.offsetY=(stage.height-img.naturalHeight*state.zoom)/2;state.fitted=true;draw();}
+function resizeStage(){const r=stage.getBoundingClientRect();stage.width=Math.max(1,Math.round(r.width));stage.height=Math.max(1,Math.round(r.height));state.fitted?draw():fitImage();}
+function pointInsideRect(p,r){return rectValid(r)&&p.x>=r[0]&&p.x<=r[2]&&p.y>=r[1]&&p.y<=r[3];}
+function moveRect(startRect,startPt,pt){const dx=pt.x-startPt.x,dy=pt.y-startPt.y,w=startRect[2]-startRect[0],h=startRect[3]-startRect[1];let x0=Math.max(0,Math.min(img.naturalWidth-w,startRect[0]+dx)),y0=Math.max(0,Math.min(img.naturalHeight-h,startRect[1]+dy));return[x0,y0,x0+w,y0+h];}
+function draw(){
+ ctx.clearRect(0,0,stage.width,stage.height);ctx.fillStyle="#0b0d10";ctx.fillRect(0,0,stage.width,stage.height);
+ if(img.complete&&img.naturalWidth)ctx.drawImage(img,state.offsetX,state.offsetY,img.naturalWidth*state.zoom,img.naturalHeight*state.zoom);
+ if(rectValid(state.rect)){const a=i2c({x:state.rect[0],y:state.rect[1]}),b=i2c({x:state.rect[2],y:state.rect[3]});ctx.save();ctx.fillStyle="rgba(255,204,0,.14)";ctx.strokeStyle="#ffcc00";ctx.lineWidth=2;ctx.setLineDash([7,4]);ctx.fillRect(a.x,a.y,b.x-a.x,b.y-a.y);ctx.strokeRect(a.x,a.y,b.x-a.x,b.y-a.y);ctx.setLineDash([]);ctx.fillStyle="#ffcc00";ctx.font="700 13px Arial,Helvetica,sans-serif";ctx.fillText(`${Math.round(state.rect[0])},${Math.round(state.rect[1])} -> ${Math.round(state.rect[2])},${Math.round(state.rect[3])}`,a.x+8,Math.max(18,a.y-8));ctx.restore();}
+ confirmBtn.disabled=!rectValid(state.rect);coordsEl.textContent=rectValid(state.rect)?`x0=${state.rect[0].toFixed(1)}, y0=${state.rect[1].toFixed(1)}, x1=${state.rect[2].toFixed(1)}, y1=${state.rect[3].toFixed(1)} | ancho=${(state.rect[2]-state.rect[0]).toFixed(1)}, alto=${(state.rect[3]-state.rect[1]).toFixed(1)}`:"Sin ROI.";setStatus(rectValid(state.rect)?"ROI listo. Confirma para regresar al notebook.":"Arrastra sobre el warp completo para dibujar el ROI.");
+}
+stage.addEventListener("pointerdown",e=>{e.preventDefault();stage.setPointerCapture(e.pointerId);const cp=canvasPoint(e);if(e.button===1||e.button===2||e.shiftKey||e.altKey){drag={type:"pan",sx:e.clientX,sy:e.clientY,ox:state.offsetX,oy:state.offsetY};return;}if(e.button!==0)return;const ip=c2i(cp);if(pointInsideRect(ip,state.rect)){drag={type:"move",startPt:ip,startRect:[...state.rect]};return;}drag={type:"draw",start:ip,current:ip};state.rect=null;draw();});
+stage.addEventListener("pointermove",e=>{if(!drag)return;e.preventDefault();if(drag.type==="pan"){state.offsetX=drag.ox+e.clientX-drag.sx;state.offsetY=drag.oy+e.clientY-drag.sy;draw();return;}const ip=c2i(canvasPoint(e));if(drag.type==="move")state.rect=moveRect(drag.startRect,drag.startPt,ip);if(drag.type==="draw")state.rect=normRect(drag.start,ip);draw();});
+function stopDrag(e){if(stage.hasPointerCapture(e.pointerId))stage.releasePointerCapture(e.pointerId);drag=null;}stage.addEventListener("pointerup",stopDrag);stage.addEventListener("pointercancel",stopDrag);stage.addEventListener("contextmenu",e=>e.preventDefault());
+stage.addEventListener("wheel",e=>{e.preventDefault();const cp=canvasPoint(e),before=c2i(cp),f=e.deltaY<0?1.12:1/1.12;state.zoom=Math.max(.02,Math.min(30,state.zoom*f));state.offsetX=cp.x-before.x*state.zoom;state.offsetY=cp.y-before.y*state.zoom;draw();},{passive:false});
+async function submitResult(confirmed){if(submitted)return;submitted=true;const payload={confirmed,rect:rectValid(state.rect)?state.rect:null};try{await fetch("/result",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});}finally{setStatus(confirmed?"Confirmado. Puedes volver al notebook.":"Cancelado. Puedes volver al notebook.");setTimeout(()=>window.close(),250);}}
+document.getElementById("fitBtn").onclick=fitImage;document.getElementById("clearBtn").onclick=()=>{state.rect=null;draw();};document.getElementById("cancelBtn").onclick=()=>submitResult(false);confirmBtn.onclick=()=>{if(rectValid(state.rect))submitResult(true);};
+window.addEventListener("keydown",e=>{if(e.key==="Enter"&&rectValid(state.rect))submitResult(true);if(e.key==="Escape")submitResult(false);if(e.key==="Delete"||e.key==="Backspace"){e.preventDefault();state.rect=null;draw();}});
+window.addEventListener("resize",resizeStage);window.addEventListener("beforeunload",()=>{if(!submitted)navigator.sendBeacon("/result",JSON.stringify({confirmed:false}));});
+img.onload=()=>{resizeStage();};img.onerror=()=>setStatus("No se pudo cargar el warp.");img.src="/image";
+</script>
+</body>
+</html>

@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Warp scale picker</title>
+<style>
+*{box-sizing:border-box}body{margin:0;height:100vh;display:grid;grid-template-columns:minmax(0,1fr)360px;grid-template-rows:56px minmax(0,1fr);font-family:Arial,Helvetica,sans-serif;background:#0f1216;color:#edf2f7}header{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;border-bottom:1px solid #2b323a;background:#171b21}h1{margin:0;font-size:17px;letter-spacing:0}.actions{display:flex;gap:8px;flex-wrap:wrap}button{border:1px solid #3a4450;border-radius:6px;background:#222832;color:#f5f7fa;padding:8px 11px;font-size:13px;cursor:pointer}button:hover{background:#2c3440}button.primary{border-color:#1f9d55;background:#1f7a46}button.danger{border-color:#9f3a3a;background:#6b2a2a}button:disabled{opacity:.45;cursor:not-allowed}main{min-width:0;min-height:0;display:grid;grid-template-rows:minmax(0,1fr)34px;background:#0b0d10}#stage{width:100%;height:100%;display:block;background:#0b0d10;touch-action:none;cursor:crosshair}#status{padding:8px 12px;border-top:1px solid #2b323a;background:#171b21;color:#d7dee8;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}aside{min-height:0;overflow:auto;border-left:1px solid #2b323a;background:#151a21;padding:12px}.panel{border:1px solid #2d3540;border-radius:8px;background:#1b2028;padding:10px;margin-bottom:12px}.panel h2{margin:0 0 8px;font-size:13px;text-transform:uppercase;color:#a7b7c8;letter-spacing:0}.coords{font-size:13px;line-height:1.5;color:#d7dee8;overflow-wrap:anywhere}.help{margin:0;color:#b7c2ce;font-size:12px;line-height:1.45}.line-list{display:grid;gap:8px}.line-row{border:1px solid #314050;border-radius:8px;background:#202732;padding:8px;cursor:pointer}.line-row.active{border-color:#90cdf4;box-shadow:0 0 0 1px rgba(144,205,244,.35) inset}.line-row strong{display:block;font-size:13px;margin-bottom:4px}.line-row small{display:block;color:#b8c4d0;line-height:1.45}.swatch{display:inline-block;width:12px;height:12px;border-radius:999px;vertical-align:middle;margin-right:6px}kbd{border:1px solid #3c4a58;border-bottom-width:2px;border-radius:4px;padding:1px 5px;background:#131821;font-size:11px;color:#ebf1f8}@media(max-width:980px){body{grid-template-columns:1fr;grid-template-rows:auto minmax(62vh,1fr)auto}aside{border-left:0;border-top:1px solid #2b323a;max-height:38vh}header{align-items:flex-start;flex-direction:column}}
+</style>
+</head>
+<body>
+<header><h1>Lineas de escala sobre el warp</h1><div class="actions"><button id="prevBtn">Anterior</button><button id="nextBtn">Siguiente</button><button id="fitBtn">Centrar</button><button id="clearActiveBtn">Limpiar activa</button><button id="clearBtn">Limpiar todo</button><button id="cancelBtn" class="danger">Cancelar</button><button id="confirmBtn" class="primary" disabled>Confirmar</button></div></header>
+<main><canvas id="stage"></canvas><div id="status">Cargando warp...</div></main>
+<aside>
+<section class="panel"><h2>Escalas</h2><div id="lineList" class="line-list"></div></section>
+<section class="panel"><h2>Controles</h2><p class="help">Click izquierdo coloca primero <strong>inicio</strong> y luego <strong>fin</strong> de la escala activa. Arrastra cualquier extremo para ajustarlo. Rueda del mouse hace zoom. <kbd>Shift</kbd>, click medio o click derecho hacen paneo. <kbd>Enter</kbd> confirma, <kbd>Esc</kbd> cancela.</p></section>
+</aside>
+<script>
+const INITIAL=__INITIAL_STATE__;
+const stage=document.getElementById("stage"),ctx=stage.getContext("2d"),statusEl=document.getElementById("status"),lineListEl=document.getElementById("lineList"),confirmBtn=document.getElementById("confirmBtn");
+const COLORS=["#5eead4","#fbbf24","#60a5fa","#f472b6","#a78bfa","#34d399"];
+const img=new Image();let drag=null,submitted=false;
+const labels=(INITIAL.lines||[]).map(line=>String(line.label));
+const state={lines:{},activeLabel:labels[0]||null,zoom:1,offsetX:0,offsetY:0,fitted:false};
+
+(INITIAL.lines||[]).forEach((line,index)=>{
+  state.lines[String(line.label)]={label:String(line.label),distance_in:Number(line.distance_in),p1:Array.isArray(line.p1)?[Number(line.p1[0]),Number(line.p1[1])]:null,p2:Array.isArray(line.p2)?[Number(line.p2[0]),Number(line.p2[1])]:null,color:COLORS[index%COLORS.length]};
+});
+
+function canvasPoint(e){const r=stage.getBoundingClientRect();return{x:e.clientX-r.left,y:e.clientY-r.top};}
+function i2c(p){return{x:p.x*state.zoom+state.offsetX,y:p.y*state.zoom+state.offsetY};}
+function c2i(p){return{x:(p.x-state.offsetX)/state.zoom,y:(p.y-state.offsetY)/state.zoom};}
+function clampPoint(p){return{x:Math.max(0,Math.min(INITIAL.imageWidth,p.x)),y:Math.max(0,Math.min(INITIAL.imageHeight,p.y))};}
+function hasAll(){return labels.every(label=>{const line=state.lines[label];return Array.isArray(line?.p1)&&Array.isArray(line?.p2);});}
+function lineComplete(label){const line=state.lines[label];return Boolean(Array.isArray(line?.p1)&&Array.isArray(line?.p2));}
+function nextMissingLabel(){for(const label of labels){if(!lineComplete(label))return label;}return labels[0]||null;}
+function activeLine(){return state.activeLabel?state.lines[state.activeLabel]:null;}
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+function pointNear(cp,pt){return dist(cp,i2c({x:pt[0],y:pt[1]}))<18;}
+function nearestHandle(cp){
+  let best=null,bestDist=18;
+  for(const label of labels){
+    const line=state.lines[label];
+    for(const key of ["p1","p2"]){
+      const pt=line[key];
+      if(!Array.isArray(pt))continue;
+      const d=dist(cp,i2c({x:pt[0],y:pt[1]}));
+      if(d<bestDist){bestDist=d;best={label,key};}
+    }
+  }
+  return best;
+}
+function setStatus(text){statusEl.textContent=text;}
+function fitImage(){if(!img.naturalWidth||!stage.width||!stage.height)return;const s=Math.min(stage.width/img.naturalWidth,stage.height/img.naturalHeight,1);state.zoom=Math.max(.02,s);state.offsetX=(stage.width-img.naturalWidth*state.zoom)/2;state.offsetY=(stage.height-img.naturalHeight*state.zoom)/2;state.fitted=true;draw();}
+function resizeStage(){const r=stage.getBoundingClientRect();stage.width=Math.max(1,Math.round(r.width));stage.height=Math.max(1,Math.round(r.height));state.fitted?draw():fitImage();}
+function setHandle(label,key,p){const q=clampPoint(p);state.lines[label][key]=[q.x,q.y];}
+function nextHandleFor(label){const line=state.lines[label];if(!Array.isArray(line.p1))return"p1";if(!Array.isArray(line.p2))return"p2";return null;}
+function cycleActive(delta){if(!labels.length)return;const current=Math.max(0,labels.indexOf(state.activeLabel));const next=(current+delta+labels.length)%labels.length;state.activeLabel=labels[next];draw();}
+function drawHandle(label,key){
+  const line=state.lines[label],pt=line[key];
+  if(!Array.isArray(pt))return;
+  const c=i2c({x:pt[0],y:pt[1]});
+  ctx.save();ctx.fillStyle=line.color;ctx.strokeStyle="#ffffff";ctx.lineWidth=2;
+  ctx.beginPath();ctx.arc(c.x,c.y,key==="p1"?7:6,0,Math.PI*2);ctx.fill();ctx.stroke();
+  ctx.fillStyle="#0f1720";ctx.font="700 12px Arial,Helvetica,sans-serif";ctx.fillText(key==="p1"?"A":"B",c.x+9,c.y-8);
+  ctx.restore();
+}
+function renderSidebar(){
+  lineListEl.innerHTML="";
+  labels.forEach(label=>{
+    const line=state.lines[label];
+    const row=document.createElement("button");
+    row.type="button";
+    row.className=`line-row${state.activeLabel===label?" active":""}`;
+    row.innerHTML=`<strong><span class="swatch" style="background:${line.color}"></span>${label} - ${line.distance_in.toFixed(3)} in</strong><small>${Array.isArray(line.p1)?`inicio: x=${line.p1[0].toFixed(1)}, y=${line.p1[1].toFixed(1)}`:"inicio: sin definir"}<br>${Array.isArray(line.p2)?`fin: x=${line.p2[0].toFixed(1)}, y=${line.p2[1].toFixed(1)}`:"fin: sin definir"}</small>`;
+    row.onclick=()=>{state.activeLabel=label;draw();};
+    lineListEl.appendChild(row);
+  });
+}
+function draw(){
+  ctx.clearRect(0,0,stage.width,stage.height);ctx.fillStyle="#0b0d10";ctx.fillRect(0,0,stage.width,stage.height);
+  if(img.complete&&img.naturalWidth)ctx.drawImage(img,state.offsetX,state.offsetY,img.naturalWidth*state.zoom,img.naturalHeight*state.zoom);
+  labels.forEach(label=>{
+    const line=state.lines[label];
+    const selected=state.activeLabel===label;
+    if(Array.isArray(line.p1)&&Array.isArray(line.p2)){
+      const a=i2c({x:line.p1[0],y:line.p1[1]}),b=i2c({x:line.p2[0],y:line.p2[1]});
+      ctx.save();ctx.strokeStyle=line.color;ctx.lineWidth=selected?4:3;ctx.setLineDash(selected?[10,5]:[7,4]);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();ctx.restore();
+      const mid={x:(a.x+b.x)/2,y:(a.y+b.y)/2};
+      ctx.save();ctx.font="700 12px Arial,Helvetica,sans-serif";
+      const text=`${label}  ${line.distance_in.toFixed(3)} in`;
+      const metrics=ctx.measureText(text),boxW=metrics.width+18,boxH=22,boxX=Math.max(8,Math.min(stage.width-boxW-8,mid.x-boxW/2)),boxY=Math.max(8,Math.min(stage.height-boxH-8,mid.y-30));
+      ctx.fillStyle="rgba(12,20,28,.80)";ctx.strokeStyle=line.color;ctx.lineWidth=1.25;ctx.beginPath();ctx.roundRect(boxX,boxY,boxW,boxH,8);ctx.fill();ctx.stroke();
+      ctx.fillStyle="#f8fbff";ctx.fillText(text,boxX+9,boxY+15);ctx.restore();
+    }
+    drawHandle(label,"p1");
+    drawHandle(label,"p2");
+  });
+  confirmBtn.disabled=!hasAll();
+  renderSidebar();
+  if(!labels.length){setStatus("No hay lineas de escala definidas.");return;}
+  const current=activeLine();
+  const nextHandle=nextHandleFor(state.activeLabel);
+  if(nextHandle){setStatus(`Escala activa: ${state.activeLabel}. Click izquierdo para colocar ${nextHandle==="p1"?"inicio":"fin"} (${current.distance_in.toFixed(3)} in).`);}
+  else{setStatus(`Escala activa: ${state.activeLabel}. Arrastra los extremos para ajustar o cambia a otra escala.`);}
+}
+
+stage.addEventListener("pointerdown",e=>{
+  e.preventDefault();stage.setPointerCapture(e.pointerId);const cp=canvasPoint(e);
+  if(e.button===1||e.button===2||e.shiftKey||e.altKey){drag={type:"pan",sx:e.clientX,sy:e.clientY,ox:state.offsetX,oy:state.offsetY};return;}
+  if(e.button!==0||!state.activeLabel)return;
+  const nearest=nearestHandle(cp);
+  if(nearest){state.activeLabel=nearest.label;drag={type:"point",label:nearest.label,key:nearest.key};draw();return;}
+  const key=nextHandleFor(state.activeLabel);
+  if(!key){const line=activeLine();const p1=line.p1,p2=line.p2;const target=(Array.isArray(p1)&&Array.isArray(p2)&&dist(cp,i2c({x:p1[0],y:p1[1]}))<=dist(cp,i2c({x:p2[0],y:p2[1]})))?"p1":"p2";setHandle(state.activeLabel,target,c2i(cp));drag={type:"point",label:state.activeLabel,key:target};draw();return;}
+  setHandle(state.activeLabel,key,c2i(cp));
+  drag={type:"point",label:state.activeLabel,key};
+  if(key==="p2"){state.activeLabel=nextMissingLabel();}
+  draw();
+});
+stage.addEventListener("pointermove",e=>{
+  if(!drag)return;e.preventDefault();
+  if(drag.type==="pan"){state.offsetX=drag.ox+e.clientX-drag.sx;state.offsetY=drag.oy+e.clientY-drag.sy;draw();return;}
+  if(drag.type==="point"){setHandle(drag.label,drag.key,c2i(canvasPoint(e)));draw();}
+});
+function stopDrag(e){if(stage.hasPointerCapture(e.pointerId))stage.releasePointerCapture(e.pointerId);drag=null;}
+stage.addEventListener("pointerup",stopDrag);stage.addEventListener("pointercancel",stopDrag);stage.addEventListener("contextmenu",e=>e.preventDefault());
+stage.addEventListener("wheel",e=>{e.preventDefault();const cp=canvasPoint(e),before=c2i(cp),factor=e.deltaY<0?1.12:1/1.12;state.zoom=Math.max(.02,Math.min(30,state.zoom*factor));state.offsetX=cp.x-before.x*state.zoom;state.offsetY=cp.y-before.y*state.zoom;draw();},{passive:false});
+
+async function submitResult(confirmed){
+  if(submitted)return;submitted=true;
+  const linesPayload={};
+  labels.forEach(label=>{const line=state.lines[label];linesPayload[label]={p1:line.p1,p2:line.p2};});
+  try{await fetch("/result",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirmed,lines:confirmed?linesPayload:null})});}
+  finally{setStatus(confirmed?"Confirmado. Puedes volver al notebook.":"Cancelado. Puedes volver al notebook.");setTimeout(()=>window.close(),250);}
+}
+
+document.getElementById("prevBtn").onclick=()=>cycleActive(-1);
+document.getElementById("nextBtn").onclick=()=>cycleActive(1);
+document.getElementById("fitBtn").onclick=fitImage;
+document.getElementById("clearActiveBtn").onclick=()=>{if(!state.activeLabel)return;state.lines[state.activeLabel].p1=null;state.lines[state.activeLabel].p2=null;draw();};
+document.getElementById("clearBtn").onclick=()=>{labels.forEach(label=>{state.lines[label].p1=null;state.lines[label].p2=null;});state.activeLabel=labels[0]||null;draw();};
+document.getElementById("cancelBtn").onclick=()=>submitResult(false);
+confirmBtn.onclick=()=>{if(hasAll())submitResult(true);};
+window.addEventListener("keydown",e=>{if(e.key==="Enter"&&hasAll())submitResult(true);if(e.key==="Escape")submitResult(false);if(e.key==="ArrowUp"){e.preventDefault();cycleActive(-1);}if(e.key==="ArrowDown"){e.preventDefault();cycleActive(1);}if((e.key==="Delete"||e.key==="Backspace")&&state.activeLabel){e.preventDefault();state.lines[state.activeLabel].p1=null;state.lines[state.activeLabel].p2=null;draw();}});
+window.addEventListener("resize",resizeStage);window.addEventListener("beforeunload",()=>{if(!submitted)navigator.sendBeacon("/result",JSON.stringify({confirmed:false}));});
+img.onload=()=>resizeStage();img.onerror=()=>setStatus("No se pudo cargar el warp.");img.src="/image";draw();
+</script>
+</body>
+</html>

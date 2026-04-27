@@ -1,3 +1,6 @@
 __pycache__/
 artifacts/
+.venv/
+server_stdout_cam_*.log
+server_stderr_cam_*.log
 *.pyc

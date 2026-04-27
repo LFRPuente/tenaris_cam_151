@@ -111,6 +111,7 @@
                 <option value="vertical_ref">vertical_ref</option>
                 <option value="tube_axis">tube_axis</option>
                 <option value="custom">custom</option>
+                <option value="warp_scale_ref">warp_scale_ref (overlay)</option>
               </select>
 
               <label class="label" for="lineLabelInput">Label de la linea</label>
@@ -223,6 +224,7 @@
                 <div class="preview-label">Warp</div>
                 <div id="previewWarpViewport" class="preview-viewport">
                   <img id="previewWarpImg" class="preview-image" alt="Warp de homografia" />
+                  <canvas id="previewWarpCanvas" class="preview-overlay-canvas"></canvas>
                 </div>
               </div>
             </div>

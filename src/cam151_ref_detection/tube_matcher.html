@@ -1,0 +1,1472 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tube matcher</title>
+<style>
+*{box-sizing:border-box}body{margin:0;min-height:100vh;font-family:Arial,Helvetica,sans-serif;background:#0f1318;color:#e8eef5}header{padding:14px 18px;border-bottom:1px solid #27303a;background:#171d25;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}h1{margin:0;font-size:19px;letter-spacing:0}.sub{font-size:13px;color:#aab7c6}.toolbar{display:flex;gap:8px;flex-wrap:wrap}button{border:1px solid #334050;border-radius:6px;background:#222c38;color:#f4f7fb;padding:8px 12px;font-size:13px;cursor:pointer}button:hover{background:#2c3847}button.primary{background:#1f6c46;border-color:#2a8b5b}button.danger{background:#6d2a2a;border-color:#924141}button.active{background:#8a6a2a;border-color:#cfb06e}.page{display:grid;grid-template-columns:minmax(280px,1fr)minmax(460px,1.35fr)minmax(280px,1fr);gap:12px;padding:12px;min-height:calc(100vh - 74px)}.panel{min-height:0;border:1px solid #27303a;border-radius:8px;background:#161c24;display:flex;flex-direction:column;overflow:hidden}.panel-header{padding:12px 14px;border-bottom:1px solid #27303a;background:#1b222c}.panel-header h2{margin:0;font-size:14px;color:#f6f8fb}.panel-header p{margin:4px 0 0;font-size:12px;color:#a8b5c3}.panel-body{padding:12px;overflow:auto;display:flex;flex-direction:column;gap:10px}.summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:12px}.metric{border:1px solid #2d3947;border-radius:8px;background:#202935;padding:10px}.metric .label{font-size:11px;color:#9cb0c3;text-transform:uppercase}.metric .value{margin-top:4px;font-size:22px;font-weight:700}.list{display:flex;flex-direction:column;gap:10px}.tube-card{border:1px solid #2c3745;border-radius:8px;background:#202834;padding:10px;display:grid;gap:8px}.tube-card.inactive{opacity:.48}.tube-card.unmatched{border-color:#8a6a2a;background:#2a2417}.tube-card.selected,.diagram-node.selected{border-color:#78b6ff!important;box-shadow:0 0 0 1px rgba(120,182,255,.65),0 0 0 3px rgba(44,112,192,.18)}.tube-top{display:flex;align-items:center;justify-content:space-between;gap:8px}.tube-title{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:700}.drag-handle{width:18px;height:18px;display:grid;place-items:center;color:#90a3b7;cursor:grab}.tube-meta{font-size:12px;color:#b8c4d1}.toggle-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.toggle-row label{display:flex;align-items:center;gap:6px;font-size:12px;color:#dbe4ee}.segmented{display:inline-flex;border:1px solid #384658;border-radius:7px;overflow:hidden}.segmented button{border:0;border-right:1px solid #384658;border-radius:0;background:#232c37;padding:6px 10px}.segmented button:last-child{border-right:0}.segmented button.active{background:#34526f}.diagram-shell{padding:12px;border-bottom:1px solid #27303a;background:#131920}.diagram-title{margin:0 0 8px;font-size:12px;color:#9fb1c4;text-transform:uppercase}.diagram-help{margin:0 0 10px;font-size:12px;color:#b1bfcd;line-height:1.4}.diagram-scroll{max-height:440px;overflow:auto;border:1px solid #2a3440;border-radius:8px;background:#0f141a}.diagram-content{position:relative;min-height:120px}.diagram-svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}.diagram-grid{position:relative;display:grid;gap:10px;padding:12px}.diagram-row{display:grid;grid-template-columns:minmax(140px,1fr)112px minmax(140px,1fr);gap:14px;align-items:center;min-height:58px;border-radius:10px;padding:2px 4px}.diagram-row.selected{background:rgba(40,67,97,.32)}.diagram-slot{min-height:54px;display:flex;align-items:center}.diagram-slot.left{justify-content:flex-end}.diagram-slot.right{justify-content:flex-start}.diagram-node{min-width:132px;max-width:100%;border:1px solid #39506a;border-radius:10px;padding:9px 11px;background:#213040;box-shadow:0 2px 10px rgba(0,0,0,.18);cursor:grab;display:grid;gap:3px}.diagram-node.left{border-color:#2c7a5d;background:#1f352d}.diagram-node.right{border-color:#476689;background:#213247}.diagram-node.manual{border-color:#8f6d2f;background:#352d1f}.diagram-node-name{font-size:13px;font-weight:700;color:#f5f9fd}.diagram-node-meta{font-size:11px;color:#c4d1dd}.diagram-placeholder{min-width:132px;border:1px dashed #334252;border-radius:10px;padding:10px 12px;text-align:center;font-size:11px;color:#7f93a8;background:#151b22}.diagram-center{display:grid;justify-items:center;gap:5px}.diagram-index{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;border:1px solid #394655;background:#202935;font-size:12px;font-weight:700;color:#f2f6fb}.diagram-row.selected .diagram-index{border-color:#79b8ff;background:#2a425e}.diagram-status{font-size:10px;color:#a8b6c5;text-transform:uppercase;letter-spacing:.04em}.diagram-total{min-width:88px;padding:4px 8px;border:1px solid #384658;border-radius:999px;background:#1d2731;color:#eef4fb;font-size:11px;font-weight:700;text-align:center}.diagram-total.missing{color:#95a7bb;background:#161c24;border-color:#2c3947}.preview-wrap{overflow:auto;padding:12px}.preview-table{width:100%;border-collapse:collapse;font-size:12px}.preview-table th,.preview-table td{border-bottom:1px solid #27303a;padding:7px 6px;text-align:left;vertical-align:top}.preview-table th{position:sticky;top:0;background:#171d25;color:#c8d3df;font-size:11px;text-transform:uppercase}.preview-row.selected td{background:rgba(38,61,88,.34)}.status-badge{display:inline-block;padding:3px 7px;border-radius:999px;font-size:11px;background:#2a3643}.status-matched{background:#1f4b36}.status-left{background:#584621}.status-right{background:#3f3359}.status-manual{background:#5a4122}.hint{padding:0 12px 12px;font-size:12px;color:#a7b4c2;line-height:1.45}.recon-shell{padding:12px;border-top:1px solid #27303a;background:#12181f}.recon-scroll{overflow:auto;border:1px solid #2a3440;border-radius:8px;background:#0f141a}.recon-svg{display:block;min-width:900px}.recon-empty{padding:16px;border:1px dashed #344252;border-radius:8px;color:#9fb1c4;text-align:center;background:#151b22}.image-shell{padding:12px;border-top:1px solid #27303a;background:#10171e;display:flex;flex-direction:column;gap:12px}.image-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.viewer-card{border:1px solid #2a3440;border-radius:8px;background:#131a21;display:flex;flex-direction:column;overflow:hidden}.viewer-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid #26313d;background:#18202a}.viewer-head h3{margin:0;font-size:13px;color:#eef4fb}.viewer-head .mini{display:block;margin-top:3px;max-width:100%;line-height:1.35}.viewer-toolbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.viewer-toolbar button{padding:6px 10px;font-size:12px}.viewer-scroll{overflow:auto;max-height:520px;background:#0e141b;cursor:grab}.viewer-scroll.panning{cursor:grabbing}.viewer-stage{position:relative;transform-origin:top left}.viewer-image{display:block;max-width:none;height:auto}.viewer-overlay{position:absolute;left:0;top:0;overflow:visible}.viewer-empty{padding:18px;border-top:1px solid #26313d;color:#9fb1c4;text-align:center;background:#131a21}.viewer-marker{cursor:pointer}.viewer-marker .viewer-link{stroke:#bfd5eb;stroke-width:2;opacity:.92}.viewer-marker .viewer-point{fill:#ffe68a;stroke:#112334;stroke-width:1.5}.viewer-marker .viewer-box{fill:#123252;stroke:#d5e8fb;stroke-width:1.5}.viewer-marker .viewer-title{fill:#f7fbff;font-size:14px;font-weight:700}.viewer-marker .viewer-measure{fill:#d6e6f7;font-size:11px;font-weight:600}.viewer-marker.inactive{opacity:.36}.viewer-marker.manual .viewer-box{fill:#5d431d;stroke:#f0d79a}.viewer-marker.selected .viewer-box{fill:#1c5fa5;stroke:#f4fbff;stroke-width:2.3}.viewer-marker.selected .viewer-link{stroke:#f0f7ff;stroke-width:2.6}.viewer-marker.selected .viewer-point{fill:#8fe3ff;stroke:#ffffff;stroke-width:2}.empty{padding:18px;border:1px dashed #344252;border-radius:8px;color:#9fb1c4;text-align:center}.footer-note{padding:12px;border-top:1px solid #27303a;color:#9fb0c2;font-size:12px;background:#171d25}.drop-target{outline:2px dashed #5b8cc2;outline-offset:2px}.obs{color:#c9d4df;max-width:240px}.mini{font-size:11px;color:#9db1c5}.tight{white-space:nowrap}.match-actions{display:grid;gap:10px;margin-bottom:12px;padding:10px;border:1px solid #2a3440;border-radius:8px;background:#121920}.match-actions-title{font-size:12px;color:#d8e4f0}.match-actions-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.action-group{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.action-group span{font-size:11px;color:#9db1c5;text-transform:uppercase}.action-group button{padding:5px 9px;font-size:12px}.action-group button:disabled{opacity:.42;cursor:default}@media(max-width:1280px){.page{grid-template-columns:1fr}.summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.diagram-row{grid-template-columns:minmax(120px,1fr)88px minmax(120px,1fr)}.image-grid{grid-template-columns:1fr}.match-actions-grid{grid-template-columns:1fr}}
+</style>
+<style>
+.page{grid-template-columns:minmax(0,1fr)!important}
+.panel-side{display:none!important}
+.panel:not(.panel-side){display:flex;flex-wrap:wrap;align-content:flex-start}
+.panel:not(.panel-side)>.panel-header{width:100%}
+.panel:not(.panel-side)>.image-shell{order:1;width:68%;min-width:520px;border-top:0;border-right:1px solid #27303a}
+.panel:not(.panel-side)>.preview-wrap{order:2;width:32%;min-width:320px}
+.panel:not(.panel-side)>.hint{order:4;width:100%}
+.diagram-shell{display:none!important}
+.recon-shell{display:none!important}
+.viewer-image{display:block!important;max-width:none;height:auto}
+.viewer-scroll{max-height:700px;background:#0d1319}
+.viewer-stage{position:relative}
+.viewer-overlay{position:absolute;left:0;top:0;display:block;width:100%;height:auto;background:transparent}
+.viewer-title-strong{fill:#f7fbff;font-size:13px;font-weight:700}
+.viewer-title-soft{fill:#cfe0f2;font-size:11px;font-weight:600}
+.viewer-ref-band{fill:#173a56}
+.viewer-ref-line{stroke:#8fd6ff;stroke-width:2.6}
+.viewer-ref-cap{stroke:#8fd6ff;stroke-width:2.2}
+.viewer-lane{stroke:#243647;stroke-width:1.1}
+.viewer-lane-fill{fill:#121a22}
+.viewer-tube-body{stroke:#3ebd7d;stroke-width:12;stroke-linecap:round}
+.viewer-tube-point{fill:#ffe48c;stroke:#10202f;stroke-width:1.6}
+.viewer-label-box{fill:#102d48;stroke:#d6ebff;stroke-width:1.4}
+.viewer-label-box.side152{fill:#203556}
+.viewer-label-box.manual{fill:#5a431a;stroke:#f2dc96}
+.viewer-label-box.selected{fill:#1d5fa7;stroke:#ffffff;stroke-width:2.2}
+.viewer-measure-line{stroke:#f6b24b;stroke-width:2.2}
+.viewer-measure-cap{stroke:#f6b24b;stroke-width:2}
+.viewer-measure-chip{fill:#eef5fb;stroke:#2e5879;stroke-width:1.1}
+.viewer-measure-text{fill:#163b59;font-size:11px;font-weight:700}
+.viewer-measure-text-soft{fill:#f1b24b;font-size:9px;font-weight:700}
+.viewer-tube-number{fill:#f7fbff;font-size:10px;font-weight:700}
+.viewer-tube-point.reordered{fill:#84beff;stroke:#f4fbff;stroke-width:2}
+.viewer-tube-number.reordered{fill:#a9d4ff}
+.viewer-click-hit.drag-target,.viewer-tube-point.drag-target{stroke:#7fd6a1;stroke-width:2.4}
+.viewer-axis-text{fill:#9fb6cb;font-size:11px}
+.viewer-footnote{fill:#8ea5bc;font-size:11px}
+.viewer-click-hit{fill:transparent;cursor:pointer}
+.viewer-lane-ghost{stroke:#d4e7fb;stroke-width:1.1;stroke-dasharray:4 4;opacity:.48}
+.table-match-cell{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.table-side-chip{display:inline-flex;align-items:center;gap:5px;padding:4px 8px;border:1px solid #415267;border-radius:999px;background:#1c2530;color:#eef4fb;font-size:11px;font-weight:700;cursor:grab;user-select:none}
+.table-side-chip.side151{border-color:#2f8b66;background:#173228}
+.table-side-chip.side152{border-color:#4c6f95;background:#1d2d42}
+.table-side-chip.reordered{border-color:#86c2ff;background:#1d4e7a}
+.table-side-chip.drag-target{outline:2px dashed #7fd6a1;outline-offset:2px}
+.table-side-empty{display:inline-flex;align-items:center;padding:4px 8px;border:1px dashed #334252;border-radius:999px;color:#8fa3b7;font-size:11px}
+.table-linker{color:#98adbf;font-size:11px}
+.preview-row.reordered td:first-child{background:rgba(36,84,132,.2)}
+@media(max-width:1200px){
+  .panel:not(.panel-side)>.diagram-shell,
+  .panel:not(.panel-side)>.image-shell,
+  .panel:not(.panel-side)>.preview-wrap{width:100%;min-width:0;border-left:0;border-right:0}
+}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Matcher de tubos 151 / 152</h1>
+    <div class="sub" id="headerSub">Cargando datasets...</div>
+  </div>
+  <div class="toolbar">
+    <button id="resetBtn">Restaurar orden original</button>
+    <button id="cancelBtn" class="danger">Cancelar</button>
+    <button id="confirmBtn" class="primary">Confirmar y exportar</button>
+  </div>
+</header>
+
+<div class="summary-grid">
+  <div class="metric"><div class="label">Pares</div><div class="value" id="metricMatched">0</div></div>
+  <div class="metric"><div class="label">Solo 151</div><div class="value" id="metricLeftOnly">0</div></div>
+  <div class="metric"><div class="label">Solo 152</div><div class="value" id="metricRightOnly">0</div></div>
+  <div class="metric"><div class="label">Inactivos</div><div class="value" id="metricInactive">0</div></div>
+</div>
+
+<div class="page">
+  <section class="panel panel-side">
+    <div class="panel-header">
+      <h2 id="leftTitle">Cam151</h2>
+      <p id="leftMeta">Arrastra para reordenar. Activo + sin match crea fila sola.</p>
+    </div>
+    <div class="panel-body">
+      <div id="leftList" class="list"></div>
+    </div>
+    <div class="footer-note">Formula izquierda: r151 = medicion_151 - 47.75</div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-header">
+      <h2>Diagrama y preview</h2>
+      <p>Ahora puedes ver el match como diagrama. Arrastra un tubo y sueltalo sobre otro del mismo lado para corregir el pairing.</p>
+    </div>
+    <div class="diagram-shell">
+      <p class="diagram-title">Diagrama de matching</p>
+      <p class="diagram-help">Las lineas muestran el emparejamiento actual. Si hay un tubo sin match, queda con linea corta a su lado.</p>
+      <div class="diagram-scroll">
+        <div id="matchDiagram" class="diagram-content">
+          <svg id="diagramSvg" class="diagram-svg"></svg>
+          <div id="diagramGrid" class="diagram-grid"></div>
+        </div>
+      </div>
+    </div>
+    <div class="preview-wrap">
+      <div class="match-actions">
+        <div id="selectedRowLabel" class="match-actions-title">Sin fila seleccionada.</div>
+        <div class="match-actions-grid">
+          <div class="action-group">
+            <span>151</span>
+            <button id="table151Up" type="button">↑</button>
+            <button id="table151Down" type="button">↓</button>
+            <button id="table151Unmatched" type="button">Sin match</button>
+            <button id="table151Deactivate" type="button">Cancelar</button>
+          </div>
+          <div class="action-group">
+            <span>152</span>
+            <button id="table152Up" type="button">↑</button>
+            <button id="table152Down" type="button">↓</button>
+            <button id="table152Unmatched" type="button">Sin match</button>
+            <button id="table152Deactivate" type="button">Cancelar</button>
+          </div>
+        </div>
+      </div>
+      <table class="preview-table">
+        <thead>
+          <tr>
+            <th>Matched</th>
+            <th>Medida izquierda</th>
+            <th>Medida derecha</th>
+            <th>Medida total</th>
+          </tr>
+        </thead>
+        <tbody id="previewBody"></tbody>
+      </table>
+      <div id="previewEmpty" class="empty" hidden>No hay filas activas para mostrar.</div>
+    </div>
+    <div class="hint">
+      <div>Base central: 408.5 in</div>
+      <div>Lado 152: antes = 41 - medicion, despues = 41 + medicion</div>
+    </div>
+    <div class="recon-shell">
+      <p class="diagram-title">Reconstrucción relativa al tubo de abajo</p>
+      <p class="diagram-help">Se toma el primer tubo completo como base visual. La línea vertical marca el fin del tubo base y cada barra muestra su delta respecto a esa referencia.</p>
+      <div id="reconEmpty" class="recon-empty" hidden>No hay suficientes datos completos para dibujar la reconstrucción.</div>
+      <div id="reconScroll" class="recon-scroll">
+        <svg id="reconSvg" class="recon-svg"></svg>
+      </div>
+    </div>
+    <div class="image-shell">
+      <p class="diagram-title">Warp final interactivo</p>
+      <p class="diagram-help">Cada lado usa el warp final real del notebook. Sobre esa imagen se dibujan puntos interactivos para seleccionar el tubo correspondiente.</p>
+      <div class="image-grid">
+        <section class="viewer-card">
+          <div class="viewer-head">
+            <div>
+              <h3 id="viewer151Title">Cam151 warp final</h3>
+              <span id="viewer151Meta" class="mini"></span>
+            </div>
+            <div class="viewer-toolbar">
+              <button id="viewer151ZoomOut" type="button">-</button>
+              <button id="viewer151ZoomReset" type="button">100%</button>
+              <button id="viewer151ZoomIn" type="button">+</button>
+              <button id="viewer151MoveUp" type="button">↑</button>
+              <button id="viewer151MoveDown" type="button">↓</button>
+              <button id="viewer151Unmatched" type="button">Sin match</button>
+              <button id="viewer151Deactivate" type="button">Cancelar</button>
+            </div>
+          </div>
+          <div id="viewer151Scroll" class="viewer-scroll">
+            <div id="viewer151Stage" class="viewer-stage">
+              <img id="viewer151Img" class="viewer-image" alt="Cam151 final">
+              <svg id="viewer151Overlay" class="viewer-overlay"></svg>
+            </div>
+          </div>
+          <div id="viewer151Empty" class="viewer-empty" hidden>No hay tubos disponibles para reconstruir en cam151.</div>
+        </section>
+        <section class="viewer-card">
+          <div class="viewer-head">
+            <div>
+              <h3 id="viewer152Title">Cam152 warp final</h3>
+              <span id="viewer152Meta" class="mini"></span>
+            </div>
+            <div class="viewer-toolbar">
+              <button id="viewer152ZoomOut" type="button">-</button>
+              <button id="viewer152ZoomReset" type="button">100%</button>
+              <button id="viewer152ZoomIn" type="button">+</button>
+              <button id="viewer152MoveUp" type="button">↑</button>
+              <button id="viewer152MoveDown" type="button">↓</button>
+              <button id="viewer152Unmatched" type="button">Sin match</button>
+              <button id="viewer152Deactivate" type="button">Cancelar</button>
+            </div>
+          </div>
+          <div id="viewer152Scroll" class="viewer-scroll">
+            <div id="viewer152Stage" class="viewer-stage">
+              <img id="viewer152Img" class="viewer-image" alt="Cam152 final">
+              <svg id="viewer152Overlay" class="viewer-overlay"></svg>
+            </div>
+          </div>
+          <div id="viewer152Empty" class="viewer-empty" hidden>No hay tubos disponibles para reconstruir en cam152.</div>
+        </section>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel panel-side">
+    <div class="panel-header">
+      <h2 id="rightTitle">Cam152</h2>
+      <p id="rightMeta">Ajusta antes/despues de la referencia y reordena cuando falte algun tubo.</p>
+    </div>
+    <div class="panel-body">
+      <div id="rightList" class="list"></div>
+    </div>
+    <div class="footer-note">Formula derecha: r152 = 41 +/- medicion segun antes/despues.</div>
+  </section>
+</div>
+
+<script>
+const INITIAL = __INITIAL_STATE__;
+const IMAGE_META = INITIAL.images || {};
+const SVG_NS = "http://www.w3.org/2000/svg";
+const clone = (value) => JSON.parse(JSON.stringify(value));
+
+const state = {
+  leftItems: clone(INITIAL.left.items || []),
+  rightItems: clone(INITIAL.right.items || []),
+  submitted: false,
+  drag: null,
+  selected: null,
+  previewRows: [],
+  zoom: {"151": 1, "152": 1},
+  pan: null,
+  reorderDrag: null,
+  viewerDrag: null,
+  suppressViewerClick: null,
+};
+
+const els = {
+  headerSub: document.getElementById("headerSub"),
+  leftTitle: document.getElementById("leftTitle"),
+  leftMeta: document.getElementById("leftMeta"),
+  rightTitle: document.getElementById("rightTitle"),
+  rightMeta: document.getElementById("rightMeta"),
+  leftList: document.getElementById("leftList"),
+  rightList: document.getElementById("rightList"),
+  matchDiagram: document.getElementById("matchDiagram"),
+  diagramGrid: document.getElementById("diagramGrid"),
+  diagramSvg: document.getElementById("diagramSvg"),
+  reconEmpty: document.getElementById("reconEmpty"),
+  reconScroll: document.getElementById("reconScroll"),
+  reconSvg: document.getElementById("reconSvg"),
+  previewBody: document.getElementById("previewBody"),
+  previewEmpty: document.getElementById("previewEmpty"),
+  selectedRowLabel: document.getElementById("selectedRowLabel"),
+  table151Up: document.getElementById("table151Up"),
+  table151Down: document.getElementById("table151Down"),
+  table151Unmatched: document.getElementById("table151Unmatched"),
+  table151Deactivate: document.getElementById("table151Deactivate"),
+  table152Up: document.getElementById("table152Up"),
+  table152Down: document.getElementById("table152Down"),
+  table152Unmatched: document.getElementById("table152Unmatched"),
+  table152Deactivate: document.getElementById("table152Deactivate"),
+  metricMatched: document.getElementById("metricMatched"),
+  metricLeftOnly: document.getElementById("metricLeftOnly"),
+  metricRightOnly: document.getElementById("metricRightOnly"),
+  metricInactive: document.getElementById("metricInactive"),
+  resetBtn: document.getElementById("resetBtn"),
+  cancelBtn: document.getElementById("cancelBtn"),
+  confirmBtn: document.getElementById("confirmBtn"),
+  viewers: {
+    "151": {
+      title: document.getElementById("viewer151Title"),
+      meta: document.getElementById("viewer151Meta"),
+      scroll: document.getElementById("viewer151Scroll"),
+      stage: document.getElementById("viewer151Stage"),
+      img: document.getElementById("viewer151Img"),
+      overlay: document.getElementById("viewer151Overlay"),
+      empty: document.getElementById("viewer151Empty"),
+      zoomIn: document.getElementById("viewer151ZoomIn"),
+      zoomOut: document.getElementById("viewer151ZoomOut"),
+      zoomReset: document.getElementById("viewer151ZoomReset"),
+      moveUp: document.getElementById("viewer151MoveUp"),
+      moveDown: document.getElementById("viewer151MoveDown"),
+      unmatched: document.getElementById("viewer151Unmatched"),
+      deactivate: document.getElementById("viewer151Deactivate"),
+    },
+    "152": {
+      title: document.getElementById("viewer152Title"),
+      meta: document.getElementById("viewer152Meta"),
+      scroll: document.getElementById("viewer152Scroll"),
+      stage: document.getElementById("viewer152Stage"),
+      img: document.getElementById("viewer152Img"),
+      overlay: document.getElementById("viewer152Overlay"),
+      empty: document.getElementById("viewer152Empty"),
+      zoomIn: document.getElementById("viewer152ZoomIn"),
+      zoomOut: document.getElementById("viewer152ZoomOut"),
+      zoomReset: document.getElementById("viewer152ZoomReset"),
+      moveUp: document.getElementById("viewer152MoveUp"),
+      moveDown: document.getElementById("viewer152MoveDown"),
+      unmatched: document.getElementById("viewer152Unmatched"),
+      deactivate: document.getElementById("viewer152Deactivate"),
+    },
+  },
+};
+
+function clamp(value, minValue, maxValue){
+  return Math.max(minValue, Math.min(maxValue, value));
+}
+
+function fmt(value, digits=2){
+  if(value === null || value === undefined || Number.isNaN(Number(value))) return "-";
+  return Number(value).toFixed(digits);
+}
+
+function itemsForSideKey(sideKey){
+  return String(sideKey) === "151" ? state.leftItems : state.rightItems;
+}
+
+function getItems(side){
+  return side === "left" ? state.leftItems : state.rightItems;
+}
+
+function sideNameFromKey(sideKey){
+  return String(sideKey) === "151" ? "left" : "right";
+}
+
+function itemCurrentIndex(sideKey, itemId){
+  return itemsForSideKey(sideKey).findIndex((item) => String(item.id) === String(itemId));
+}
+
+function isItemReordered(sideKey, itemOrId){
+  const item = typeof itemOrId === "object" && itemOrId
+    ? itemOrId
+    : itemsForSideKey(sideKey).find((entry) => String(entry.id) === String(itemOrId));
+  if(!item) return false;
+  const currentIndex = itemCurrentIndex(sideKey, item.id);
+  return currentIndex >= 0 && Number(currentIndex) !== Number(item.source_order);
+}
+
+function isSelected(sideKey, itemId){
+  return Boolean(
+    state.selected &&
+    String(state.selected.side) === String(sideKey) &&
+    String(state.selected.itemId) === String(itemId)
+  );
+}
+
+function rowHasSelectedItem(row){
+  if(!state.selected || !row) return false;
+  return Boolean(
+    (row.leftItem && isSelected(row.leftItem.side, row.leftItem.id)) ||
+    (row.rightItem && isSelected(row.rightItem.side, row.rightItem.id))
+  );
+}
+
+function selectedPreviewRow(){
+  return state.previewRows.find((row) => rowHasSelectedItem(row)) || null;
+}
+
+function selectedRowItem(sideKey){
+  const row = selectedPreviewRow();
+  if(row){
+    return String(sideKey) === "151" ? (row.leftItem || null) : (row.rightItem || null);
+  }
+  if(state.selected && String(state.selected.side) === String(sideKey)){
+    return itemsForSideKey(sideKey).find((item) => String(item.id) === String(state.selected.itemId)) || null;
+  }
+  return null;
+}
+
+function applySelectionHighlights(){
+  document.querySelectorAll("[data-select-side][data-item-id]").forEach((element) => {
+    element.classList.toggle("selected", isSelected(element.dataset.selectSide, element.dataset.itemId));
+  });
+  document.querySelectorAll(".diagram-row").forEach((rowElement) => {
+    const row = state.previewRows[Number(rowElement.dataset.rowIndex)];
+    rowElement.classList.toggle("selected", rowHasSelectedItem(row));
+  });
+  document.querySelectorAll(".preview-row").forEach((rowElement) => {
+    const row = state.previewRows[Number(rowElement.dataset.rowIndex)];
+    rowElement.classList.toggle("selected", rowHasSelectedItem(row));
+  });
+}
+
+function ensureSelectionVisible(){
+  if(!state.selected) return;
+  const {side, itemId} = state.selected;
+  const rowNode = document.querySelector(`.diagram-node[data-select-side="${side}"][data-item-id="${itemId}"]`);
+  if(rowNode){
+    rowNode.scrollIntoView({block: "nearest", inline: "nearest"});
+  }
+  const cardNode = document.querySelector(`.tube-card[data-select-side="${side}"][data-item-id="${itemId}"]`);
+  if(cardNode){
+    cardNode.scrollIntoView({block: "nearest", inline: "nearest"});
+  }
+  const viewer = els.viewers[String(side)];
+  const meta = IMAGE_META[String(side)] || {};
+  const marker = (meta.markers || []).find((entry) => String(entry.id) === String(itemId));
+  if(viewer && marker){
+    const zoom = state.zoom[String(side)] || 1;
+    viewer.scroll.scrollTo({
+      left: Math.max(0, Number(marker.x) * zoom - (viewer.scroll.clientWidth * 0.38)),
+      top: Math.max(0, Number(marker.y) * zoom - (viewer.scroll.clientHeight * 0.28)),
+      behavior: "smooth",
+    });
+  }
+}
+
+function selectItem(sideKey, itemId, ensureVisible=true){
+  if(!sideKey || !itemId){
+    state.selected = null;
+    renderViewers();
+    applySelectionHighlights();
+    return;
+  }
+  state.selected = {side: String(sideKey), itemId: String(itemId)};
+  renderViewers();
+  applySelectionHighlights();
+  if(ensureVisible){
+    ensureSelectionVisible();
+  }
+}
+
+function r151(item){
+  if(!item) return null;
+  return Number(item.distance_in) - Number(INITIAL.config.left_reference_in);
+}
+
+function r152(item){
+  if(!item) return null;
+  const dist = Number(item.distance_in);
+  return item.relative_position === "before"
+    ? Number(INITIAL.config.right_reference_in) - dist
+    : Number(INITIAL.config.right_reference_in) + dist;
+}
+
+function totalLength(leftItem, rightItem){
+  const leftValue = r151(leftItem);
+  const rightValue = r152(rightItem);
+  if(leftValue === null || rightValue === null) return null;
+  return Number(INITIAL.config.base_central_in) + leftValue + rightValue;
+}
+
+function signedDistance(sideKey, item){
+  if(!item) return 0;
+  const dist = Number(item.distance_in || 0);
+  if(String(sideKey) === "152"){
+    return item.relative_position === "before" ? -dist : dist;
+  }
+  return dist;
+}
+
+function sideReferenceText(sideKey){
+  return String(sideKey) === "151"
+    ? `Ref = ${fmt(INITIAL.config.left_reference_in, 2)} in`
+    : `Ref = ${fmt(INITIAL.config.right_reference_in, 2)} in`;
+}
+
+function buildViewerLayout(sideKey){
+  const items = itemsForSideKey(sideKey);
+  if(!items.length){
+    return null;
+  }
+  const signedValues = items.map((item) => Math.abs(signedDistance(sideKey, item)));
+  const maxAbs = Math.max(12, ...signedValues);
+  const width = 940;
+  const leftPad = 120;
+  const rightPad = 120;
+  const topPad = 84;
+  const bottomPad = 50;
+  const laneGap = 74;
+  const laneHeight = 44;
+  const refX = width * 0.5;
+  const halfSpan = Math.max(180, (width - leftPad - rightPad) * 0.5);
+  const scale = halfSpan / maxAbs;
+  const height = topPad + bottomPad + Math.max(items.length, 1) * laneGap;
+  const markerMap = new Map();
+
+  items.forEach((item, index) => {
+    const y = topPad + index * laneGap + laneHeight * 0.5;
+    const signed = signedDistance(sideKey, item);
+    const markerX = refX + signed * scale;
+    const segmentStartX = Math.min(refX, markerX);
+    const segmentEndX = Math.max(refX, markerX);
+    const direction = signed >= 0 ? "right" : "left";
+    markerMap.set(String(item.id), {
+      item,
+      y,
+      markerX,
+      segmentStartX,
+      segmentEndX,
+      direction,
+      measureCenterX: 0.5 * (segmentStartX + segmentEndX),
+    });
+  });
+
+  return {width, height, refX, topPad, bottomPad, laneGap, laneHeight, maxAbs, scale, markerMap};
+}
+
+function statusChip(status){
+  const labels = {
+    matched: ["Matched", "status-matched"],
+    left_only: ["Solo 151", "status-left"],
+    right_only: ["Solo 152", "status-right"],
+    left_only_manual: ["Sin match 151", "status-manual"],
+    right_only_manual: ["Sin match 152", "status-manual"],
+  };
+  const entry = labels[status] || [status, ""];
+  return `<span class="status-badge ${entry[1]}">${entry[0]}</span>`;
+}
+
+function statusText(status){
+  const labels = {
+    matched: "Matched",
+    left_only: "Solo 151",
+    right_only: "Solo 152",
+    left_only_manual: "Sin match 151",
+    right_only_manual: "Sin match 152",
+  };
+  return labels[status] || status;
+}
+
+function attachDragHandlers(element, side, itemId){
+  element.draggable = true;
+  element.dataset.side = side;
+  element.dataset.itemId = itemId;
+  element.addEventListener("dragstart", (event) => {
+    state.drag = {side, itemId};
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", `${side}:${itemId}`);
+  });
+  element.addEventListener("dragend", () => {
+    state.drag = null;
+    document.querySelectorAll(".drop-target").forEach((el) => el.classList.remove("drop-target"));
+  });
+  element.addEventListener("dragover", (event) => {
+    if(!state.drag || state.drag.side !== side || state.drag.itemId === itemId) return;
+    event.preventDefault();
+    element.classList.add("drop-target");
+  });
+  element.addEventListener("dragleave", () => element.classList.remove("drop-target"));
+  element.addEventListener("drop", (event) => {
+    event.preventDefault();
+    element.classList.remove("drop-target");
+    if(!state.drag || state.drag.side !== side || state.drag.itemId === itemId) return;
+    moveItemById(side, state.drag.itemId, itemId);
+  });
+}
+
+function buildPreviewRows(){
+  const leftQueue = state.leftItems.filter((item) => item.active);
+  const rightQueue = state.rightItems.filter((item) => item.active);
+  const rows = [];
+  let i = 0;
+  let j = 0;
+  let rowNumber = 1;
+
+  while(i < leftQueue.length || j < rightQueue.length){
+    const leftItem = i < leftQueue.length ? leftQueue[i] : null;
+    const rightItem = j < rightQueue.length ? rightQueue[j] : null;
+
+    if(leftItem && leftItem.unmatched){
+      rows.push({tube_number: rowNumber++, status: "left_only_manual", leftItem, rightItem: null});
+      i += 1;
+      continue;
+    }
+    if(rightItem && rightItem.unmatched){
+      rows.push({tube_number: rowNumber++, status: "right_only_manual", leftItem: null, rightItem});
+      j += 1;
+      continue;
+    }
+    if(leftItem && rightItem){
+      rows.push({tube_number: rowNumber++, status: "matched", leftItem, rightItem});
+      i += 1;
+      j += 1;
+      continue;
+    }
+    if(leftItem){
+      rows.push({tube_number: rowNumber++, status: "left_only", leftItem, rightItem: null});
+      i += 1;
+      continue;
+    }
+    rows.push({tube_number: rowNumber++, status: "right_only", leftItem: null, rightItem});
+    j += 1;
+  }
+  return rows;
+}
+
+function renderDiagram(rows){
+  return;
+}
+
+function renderReconstruction(rows){
+  return;
+}
+
+function drawDiagramLinks(){
+  return;
+  /*
+  const svg = els.diagramSvg;
+  const root = els.matchDiagram;
+  const width = Math.max(1, root.clientWidth);
+  const height = Math.max(1, els.diagramGrid.offsetHeight);
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("width", String(width));
+  svg.setAttribute("height", String(height));
+  svg.innerHTML = "";
+
+  const centerX = width * 0.5;
+
+  function offsetWithin(element, ancestor){
+    let x = 0;
+    let y = 0;
+    let current = element;
+    while(current && current !== ancestor){
+      x += current.offsetLeft;
+      y += current.offsetTop;
+      current = current.offsetParent;
+    }
+    return {x, y};
+  }
+
+  function addPath(pathD, color, dashed=false){
+    const path = document.createElementNS(SVG_NS, "path");
+    path.setAttribute("d", pathD);
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", color);
+    path.setAttribute("stroke-width", dashed ? "2" : "2.6");
+    path.setAttribute("stroke-linecap", "round");
+    if(dashed){
+      path.setAttribute("stroke-dasharray", "6 7");
+      path.setAttribute("opacity", "0.9");
+    } else {
+      path.setAttribute("opacity", "0.95");
+    }
+    svg.appendChild(path);
+  }
+
+  state.previewRows.forEach((row, rowIndex) => {
+    const leftNode = root.querySelector(`.diagram-node[data-row="${rowIndex}"][data-side="left"]`);
+    const rightNode = root.querySelector(`.diagram-node[data-row="${rowIndex}"][data-side="right"]`);
+    if(leftNode && rightNode){
+      const leftPos = offsetWithin(leftNode, root);
+      const rightPos = offsetWithin(rightNode, root);
+      const x1 = leftPos.x + leftNode.offsetWidth;
+      const y1 = leftPos.y + leftNode.offsetHeight * 0.5;
+      const x2 = rightPos.x;
+      const y2 = rightPos.y + rightNode.offsetHeight * 0.5;
+      const dx = Math.max(40, Math.abs(x2 - x1) * 0.35);
+      addPath(`M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`, row.status === "matched" ? "#4db38c" : "#b18d42");
+      return;
+    }
+    if(leftNode){
+      const leftPos = offsetWithin(leftNode, root);
+      const x1 = leftPos.x + leftNode.offsetWidth;
+      const y1 = leftPos.y + leftNode.offsetHeight * 0.5;
+      addPath(`M ${x1} ${y1} L ${centerX - 14} ${y1}`, "#b18d42", true);
+      return;
+    }
+    if(rightNode){
+      const rightPos = offsetWithin(rightNode, root);
+      const x2 = rightPos.x;
+      const y2 = rightPos.y + rightNode.offsetHeight * 0.5;
+      addPath(`M ${centerX + 14} ${y2} L ${x2} ${y2}`, "#7f6bc4", true);
+    }
+  });
+  */
+}
+
+function renderPreview(rows=buildPreviewRows()){
+  state.previewRows = rows;
+  els.previewBody.innerHTML = "";
+  const visibleRows = rows.filter((row) => row.leftItem || row.rightItem);
+  els.previewEmpty.hidden = visibleRows.length > 0;
+  let matched = 0;
+  let leftOnly = 0;
+  let rightOnly = 0;
+
+  rows.forEach((row, rowIndex) => {
+    const total = totalLength(row.leftItem, row.rightItem);
+    if(row.status === "matched") matched += 1;
+    else if(row.status === "left_only" || row.status === "left_only_manual") leftOnly += 1;
+    else rightOnly += 1;
+
+    const leftText = row.leftItem ? `${fmt(row.leftItem.distance_in, 3)} in` : "—";
+    const rightText = row.rightItem ? `${fmt(row.rightItem.distance_in, 3)} in` : "—";
+    const totalText = total === null ? "—" : `${fmt(total, 3)} in`;
+    const leftChip = row.leftItem
+      ? `<span class="table-side-chip side151${isItemReordered("151", row.leftItem) ? " reordered" : ""}" draggable="true" data-side-key="151" data-item-id="${row.leftItem.id}">151:${row.leftItem.tube_idx}</span>`
+      : `<span class="table-side-empty">151:-</span>`;
+    const rightChip = row.rightItem
+      ? `<span class="table-side-chip side152${isItemReordered("152", row.rightItem) ? " reordered" : ""}" draggable="true" data-side-key="152" data-item-id="${row.rightItem.id}">152:${row.rightItem.tube_idx}</span>`
+      : `<span class="table-side-empty">152:-</span>`;
+    const rowStatus = statusText(row.status);
+
+    const tr = document.createElement("tr");
+    tr.className = "preview-row";
+    if((row.leftItem && isItemReordered("151", row.leftItem)) || (row.rightItem && isItemReordered("152", row.rightItem))){
+      tr.classList.add("reordered");
+    }
+    tr.dataset.rowIndex = String(rowIndex);
+    tr.innerHTML = `
+      <td class="tight">
+        <div class="table-match-cell">
+          ${leftChip}
+          <span class="table-linker">${row.status === "matched" ? "↔" : "•"}</span>
+          ${rightChip}
+        </div>
+        <div class="mini">${rowStatus}</div>
+      </td>
+      <td>${leftText}</td>
+      <td>${rightText}</td>
+      <td>${totalText}</td>
+    `;
+    tr.addEventListener("click", () => {
+      const preferredItem =
+        (row.leftItem && isSelected(row.leftItem.side, row.leftItem.id)) ? row.leftItem :
+        (row.rightItem && isSelected(row.rightItem.side, row.rightItem.id)) ? row.rightItem :
+        row.leftItem || row.rightItem || null;
+      if(preferredItem){
+        selectItem(preferredItem.side, preferredItem.id);
+      }
+    });
+    tr.querySelectorAll(".table-side-chip").forEach((chip) => {
+      chip.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        selectItem(chip.dataset.sideKey, chip.dataset.itemId);
+      });
+      chip.addEventListener("dragstart", (event) => startTableDrag(event, chip.dataset.sideKey, chip.dataset.itemId));
+      chip.addEventListener("dragover", (event) => {
+        if(!canAcceptReorderDrop(chip.dataset.sideKey, chip.dataset.itemId)) return;
+        event.preventDefault();
+        markTableDropTarget(chip.dataset.sideKey, chip.dataset.itemId);
+      });
+      chip.addEventListener("dragleave", () => {
+        chip.classList.remove("drag-target");
+      });
+      chip.addEventListener("drop", (event) => {
+        if(!canAcceptReorderDrop(chip.dataset.sideKey, chip.dataset.itemId)) return;
+        event.preventDefault();
+        dropReorderOnTarget(chip.dataset.sideKey, chip.dataset.itemId);
+      });
+      chip.addEventListener("dragend", clearReorderDrag);
+    });
+    els.previewBody.appendChild(tr);
+  });
+
+  els.metricMatched.textContent = String(matched);
+  els.metricLeftOnly.textContent = String(leftOnly);
+  els.metricRightOnly.textContent = String(rightOnly);
+  els.metricInactive.textContent = String(
+    state.leftItems.filter((item) => !item.active).length + state.rightItems.filter((item) => !item.active).length
+  );
+}
+
+function makeToggle(labelText, checked, onChange){
+  const label = document.createElement("label");
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.checked = Boolean(checked);
+  input.addEventListener("change", () => onChange(input.checked));
+  label.append(input, document.createTextNode(labelText));
+  return label;
+}
+
+function renderList(side){
+  const items = side === "left" ? state.leftItems : state.rightItems;
+  const container = side === "left" ? els.leftList : els.rightList;
+  container.innerHTML = "";
+  if(!items.length){
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "Sin tubos cargados.";
+    container.appendChild(empty);
+    return;
+  }
+
+  items.forEach((item) => {
+    const card = document.createElement("div");
+    card.className = "tube-card";
+    card.dataset.selectSide = item.side;
+    card.dataset.itemId = item.id;
+    if(!item.active) card.classList.add("inactive");
+    if(item.unmatched) card.classList.add("unmatched");
+    attachDragHandlers(card, side, item.id);
+    card.addEventListener("click", (event) => {
+      if(event.target.closest("input,button,label")) return;
+      selectItem(item.side, item.id);
+    });
+
+    const top = document.createElement("div");
+    top.className = "tube-top";
+    top.innerHTML = `
+      <div class="tube-title"><span class="drag-handle">::</span><span>${item.display_name}</span></div>
+      <div class="tube-meta">${fmt(item.distance_in, 3)} in</div>
+    `;
+    card.appendChild(top);
+
+    const meta = document.createElement("div");
+    meta.className = "tube-meta";
+    meta.innerHTML = `<div>Original: #${item.tube_idx} <span class="mini">| offset_px=${item.offset_px === null || item.offset_px === undefined ? "-" : fmt(item.offset_px, 2)}</span></div>`;
+    card.appendChild(meta);
+
+    const toggles = document.createElement("div");
+    toggles.className = "toggle-row";
+    toggles.appendChild(makeToggle("Activo", item.active, (checked) => { item.active = checked; renderAll(); }));
+    toggles.appendChild(makeToggle("Sin match", item.unmatched, (checked) => { item.unmatched = checked; renderAll(); }));
+    if(side === "right"){
+      const seg = document.createElement("div");
+      seg.className = "segmented";
+      const beforeBtn = document.createElement("button");
+      const afterBtn = document.createElement("button");
+      beforeBtn.textContent = "Antes";
+      afterBtn.textContent = "Despues";
+      if(item.relative_position === "before") beforeBtn.classList.add("active");
+      else afterBtn.classList.add("active");
+      beforeBtn.addEventListener("click", () => { item.relative_position = "before"; renderAll(); });
+      afterBtn.addEventListener("click", () => { item.relative_position = "after"; renderAll(); });
+      seg.append(beforeBtn, afterBtn);
+      toggles.appendChild(seg);
+    }
+    card.appendChild(toggles);
+
+    const notes = document.createElement("input");
+    notes.type = "text";
+    notes.value = item.notes || "";
+    notes.placeholder = "Nota opcional";
+    notes.style.width = "100%";
+    notes.style.border = "1px solid #384658";
+    notes.style.borderRadius = "6px";
+    notes.style.background = "#151b22";
+    notes.style.color = "#ecf2f9";
+    notes.style.padding = "7px 8px";
+    notes.style.fontSize = "12px";
+    notes.addEventListener("input", () => {
+      item.notes = notes.value;
+      renderPreview(state.previewRows);
+      applySelectionHighlights();
+    });
+    card.appendChild(notes);
+
+    container.appendChild(card);
+  });
+}
+
+function renderViewer(sideKey){
+  const viewer = els.viewers[String(sideKey)];
+  const meta = IMAGE_META[String(sideKey)] || {};
+  if(!viewer) return;
+  const selectedItem = selectedRowItem(sideKey);
+
+  const activeCount = itemsForSideKey(sideKey).filter((item) => item.active).length;
+  const unmatchedCount = itemsForSideKey(sideKey).filter((item) => item.active && item.unmatched).length;
+
+  viewer.title.textContent = `Cam${sideKey} warp interactiva`;
+  viewer.meta.textContent = `${sideReferenceText(sideKey)} | ${activeCount} activos | ${unmatchedCount} sin match${selectedItem ? ` | sel=${selectedItem.tube_idx}` : ""}`;
+  viewer.zoomReset.textContent = `${Math.round((state.zoom[String(sideKey)] || 1) * 100)}%`;
+  const available = Boolean(meta.available && meta.url && meta.width && meta.height);
+  [viewer.zoomIn, viewer.zoomOut, viewer.zoomReset, viewer.moveUp, viewer.moveDown, viewer.unmatched, viewer.deactivate].forEach((button) => {
+    button.disabled = !available;
+  });
+
+  if(!available){
+    viewer.scroll.hidden = true;
+    viewer.empty.hidden = false;
+    viewer.overlay.innerHTML = "";
+    viewer.img.removeAttribute("src");
+    return;
+  }
+
+  viewer.empty.hidden = true;
+  viewer.scroll.hidden = false;
+  if(viewer.img.getAttribute("src") !== meta.url){
+    viewer.img.setAttribute("src", meta.url);
+  }
+
+  const zoom = state.zoom[String(sideKey)] || 1;
+  const scaledWidth = Math.round(Number(meta.width) * zoom);
+  const scaledHeight = Math.round(Number(meta.height) * zoom);
+  viewer.stage.style.width = `${scaledWidth}px`;
+  viewer.stage.style.height = `${scaledHeight}px`;
+  viewer.img.width = scaledWidth;
+  viewer.img.height = scaledHeight;
+  viewer.overlay.setAttribute("viewBox", `0 0 ${meta.width} ${meta.height}`);
+  viewer.overlay.setAttribute("width", String(scaledWidth));
+  viewer.overlay.setAttribute("height", String(scaledHeight));
+  viewer.overlay.style.width = `${scaledWidth}px`;
+  viewer.overlay.style.height = `${scaledHeight}px`;
+  viewer.overlay.innerHTML = "";
+
+  const svg = viewer.overlay;
+  const add = (tag, attrs, text="") => {
+    const node = document.createElementNS(SVG_NS, tag);
+    Object.entries(attrs || {}).forEach(([key, value]) => node.setAttribute(key, String(value)));
+    if(text) node.textContent = text;
+    svg.appendChild(node);
+    return node;
+  };
+
+  const markers = Array.isArray(meta.markers) ? meta.markers : [];
+  const itemMap = new Map(itemsForSideKey(sideKey).map((item) => [String(item.id), item]));
+  const refPoints = markers
+    .map((marker) => ({x: Number(marker.ref_x), y: Number(marker.y)}))
+    .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
+    .sort((a, b) => a.y - b.y);
+  const refValues = refPoints.map((point) => point.x);
+  const refX = refValues.length
+    ? refValues.slice().sort((a, b) => a - b)[Math.floor(refValues.length / 2)]
+    : Number(meta.width) * 0.5;
+  const refTop = 18;
+  const refBottom = Number(meta.height) - 18;
+
+  if(refPoints.length >= 2){
+    add("polyline", {
+      points: refPoints.map((point) => `${point.x},${point.y}`).join(" "),
+      class: "viewer-ref-line",
+      fill: "none",
+    });
+  } else {
+    add("line", {x1: refX, y1: refTop, x2: refX, y2: refBottom, class: "viewer-ref-line"});
+  }
+
+  const selectedId = isSelected(sideKey, state.selected?.itemId) ? String(state.selected.itemId) : null;
+  markers.forEach((marker, markerIndex) => {
+    const item = itemMap.get(String(marker.id));
+    if(!item) return;
+
+    const laneY = Number(marker.y);
+    const tubeX = Number(marker.x);
+    const rowRefX = Number.isFinite(Number(marker.ref_x)) ? Number(marker.ref_x) : refX;
+    const isCurrent = selectedId === String(item.id);
+    const segmentStart = Math.min(tubeX, rowRefX);
+    const segmentEnd = Math.max(tubeX, rowRefX);
+    const direction = tubeX >= rowRefX ? "right" : "left";
+    const reordered = isItemReordered(sideKey, item);
+    const numberX = clamp(direction === "right" ? tubeX + 8 : tubeX - 24, 4, Number(meta.width) - 22);
+    const numberY = laneY - 6;
+    const measureTextY = laneY + (markerIndex % 2 === 0 ? -8 : 12);
+    const measureTextX = clamp(((segmentStart + segmentEnd) * 0.5), 20, Number(meta.width) - 20);
+
+    add("line", {
+      x1: segmentStart,
+      y1: laneY,
+      x2: segmentEnd,
+      y2: laneY,
+      class: "viewer-measure-line",
+      opacity: item.active ? (isCurrent ? "0.98" : "0.42") : "0.18",
+    });
+    add("line", {
+      x1: segmentStart,
+      y1: laneY - 8,
+      x2: segmentStart,
+      y2: laneY + 8,
+      class: "viewer-measure-cap",
+      opacity: item.active ? (isCurrent ? "0.95" : "0.38") : "0.18",
+    });
+    add("line", {
+      x1: segmentEnd,
+      y1: laneY - 8,
+      x2: segmentEnd,
+      y2: laneY + 8,
+      class: "viewer-measure-cap",
+      opacity: item.active ? (isCurrent ? "0.95" : "0.38") : "0.18",
+    });
+    add("text", {
+      x: measureTextX,
+      y: measureTextY,
+      "text-anchor": "middle",
+      class: "viewer-measure-text-soft",
+      opacity: item.active ? (isCurrent ? "1" : "0.82") : "0.3",
+    }, `${fmt(item.distance_in, 1)} in`);
+
+    const point = add("circle", {
+      cx: tubeX,
+      cy: laneY,
+      r: isCurrent ? 8.5 : 5.2,
+      class: `viewer-tube-point${reordered ? " reordered" : ""}`,
+      opacity: item.active ? "1" : "0.45",
+      "data-select-side": String(sideKey),
+      "data-item-id": item.id,
+    });
+    const titleNode = document.createElementNS(SVG_NS, "title");
+    titleNode.textContent = `Tubo ${item.tube_idx} | ${fmt(item.distance_in, 2)} in`;
+    point.appendChild(titleNode);
+    add("text", {
+      x: numberX,
+      y: numberY,
+      class: `viewer-tube-number${reordered ? " reordered" : ""}`,
+      opacity: item.active ? "0.95" : "0.45",
+    }, String(item.tube_idx));
+
+    const hit = add("circle", {
+      cx: tubeX,
+      cy: laneY,
+      r: 13,
+      class: "viewer-click-hit",
+      "data-select-side": String(sideKey),
+      "data-item-id": item.id,
+    });
+    hit.addEventListener("mousedown", (event) => startViewerMarkerDrag(sideKey, item.id, event));
+    hit.addEventListener("click", (event) => {
+      if(
+        state.suppressViewerClick &&
+        String(state.suppressViewerClick.sideKey) === String(sideKey) &&
+        String(state.suppressViewerClick.itemId) === String(item.id)
+      ){
+        state.suppressViewerClick = null;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      selectItem(sideKey, item.id, false);
+    });
+
+    if(!isCurrent){
+      return;
+    }
+
+    const measureChipW = 92;
+    const measureChipX = clamp(((segmentStart + segmentEnd) * 0.5) - measureChipW * 0.5, 12, Number(meta.width) - measureChipW - 12);
+    const measureChipY = laneY - 30;
+    const labelW = 122;
+    const labelH = 42;
+    const labelX = direction === "right"
+      ? clamp(tubeX + 18, 6, Number(meta.width) - labelW - 6)
+      : clamp(tubeX - labelW - 18, 6, Number(meta.width) - labelW - 6);
+    const labelY = clamp(laneY - labelH * 0.5, 6, Number(meta.height) - labelH - 6);
+
+    add("line", {x1: segmentStart, y1: laneY, x2: segmentEnd, y2: laneY, class: "viewer-measure-line", opacity: "0.98"});
+    add("line", {x1: segmentStart, y1: laneY - 14, x2: segmentStart, y2: laneY + 14, class: "viewer-measure-cap"});
+    add("line", {x1: segmentEnd, y1: laneY - 14, x2: segmentEnd, y2: laneY + 14, class: "viewer-measure-cap"});
+    add("circle", {cx: rowRefX, cy: laneY, r: 4.8, fill: "#8fd6ff", stroke: "#10202f", "stroke-width": "1.2"});
+    add("rect", {x: measureChipX, y: measureChipY, width: measureChipW, height: 22, rx: 11, ry: 11, class: "viewer-measure-chip"});
+    add("text", {x: measureChipX + measureChipW * 0.5, y: measureChipY + 15, "text-anchor": "middle", class: "viewer-measure-text"}, `${fmt(item.distance_in, 2)} in`);
+    add("rect", {
+      x: labelX,
+      y: labelY,
+      width: labelW,
+      height: labelH,
+      rx: 10,
+      ry: 10,
+      class: `viewer-label-box${String(sideKey) === "152" ? " side152" : ""}${item.unmatched ? " manual" : ""} selected`,
+      opacity: item.active ? "1" : "0.58",
+    });
+    add("text", {x: labelX + 12, y: labelY + 16, class: "viewer-title-strong"}, `Tubo ${item.tube_idx}`);
+    add("text", {x: labelX + 12, y: labelY + 31, class: "viewer-title-soft"}, String(sideKey) === "152" ? (item.relative_position === "before" ? "antes ref" : "despues ref") : "lado 151");
+    add("line", {x1: tubeX, y1: laneY, x2: direction === "right" ? labelX : labelX + labelW, y2: laneY, class: "viewer-lane", opacity: "0.88"});
+  });
+}
+
+function renderViewers(){
+  renderViewer("151");
+  renderViewer("152");
+}
+
+function setViewerZoom(sideKey, nextZoom, focusEvent=null){
+  const viewer = els.viewers[String(sideKey)];
+  const meta = IMAGE_META[String(sideKey)] || {};
+  if(!viewer || !meta.available) return;
+  const previousZoom = state.zoom[String(sideKey)] || 1;
+  const targetZoom = Math.max(0.55, Number(nextZoom) || 1);
+  if(Math.abs(targetZoom - previousZoom) < 0.0001) return;
+
+  const rect = viewer.scroll.getBoundingClientRect();
+  const focusContentX = focusEvent
+    ? (viewer.scroll.scrollLeft + (focusEvent.clientX - rect.left)) / previousZoom
+    : (viewer.scroll.scrollLeft + (viewer.scroll.clientWidth * 0.5)) / previousZoom;
+  const focusContentY = focusEvent
+    ? (viewer.scroll.scrollTop + (focusEvent.clientY - rect.top)) / previousZoom
+    : (viewer.scroll.scrollTop + (viewer.scroll.clientHeight * 0.5)) / previousZoom;
+
+  state.zoom[String(sideKey)] = targetZoom;
+  renderViewer(String(sideKey));
+  requestAnimationFrame(() => {
+    const nextRect = viewer.scroll.getBoundingClientRect();
+    const visualX = focusEvent ? focusEvent.clientX - nextRect.left : viewer.scroll.clientWidth * 0.5;
+    const visualY = focusEvent ? focusEvent.clientY - nextRect.top : viewer.scroll.clientHeight * 0.5;
+    viewer.scroll.scrollLeft = Math.max(0, focusContentX * targetZoom - visualX);
+    viewer.scroll.scrollTop = Math.max(0, focusContentY * targetZoom - visualY);
+    applySelectionHighlights();
+  });
+}
+
+function moveItemById(side, dragId, targetId){
+  const items = getItems(side);
+  const from = items.findIndex((item) => item.id === dragId);
+  const to = items.findIndex((item) => item.id === targetId);
+  if(from < 0 || to < 0 || from === to) return;
+  const [moved] = items.splice(from, 1);
+  items.splice(to, 0, moved);
+  renderAll();
+}
+
+function clearTableDragTargets(){
+  document.querySelectorAll(".table-side-chip.drag-target").forEach((node) => node.classList.remove("drag-target"));
+}
+
+function clearViewerDropTargets(){
+  document.querySelectorAll(".viewer-click-hit.drag-target,.viewer-tube-point.drag-target").forEach((node) => node.classList.remove("drag-target"));
+}
+
+function clearReorderDrag(){
+  state.reorderDrag = null;
+  clearTableDragTargets();
+}
+
+function startTableDrag(event, sideKey, itemId){
+  state.reorderDrag = {kind: "table", sideKey: String(sideKey), itemId: String(itemId)};
+  if(event.dataTransfer){
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", `${sideKey}:${itemId}`);
+  }
+}
+
+function canAcceptReorderDrop(sideKey, targetId){
+  return Boolean(
+    state.reorderDrag &&
+    String(state.reorderDrag.sideKey) === String(sideKey) &&
+    String(state.reorderDrag.itemId) !== String(targetId)
+  );
+}
+
+function markTableDropTarget(sideKey, targetId){
+  clearTableDragTargets();
+  const node = document.querySelector(`.table-side-chip[data-side-key="${sideKey}"][data-item-id="${targetId}"]`);
+  if(node){
+    node.classList.add("drag-target");
+  }
+}
+
+function dropReorderOnTarget(sideKey, targetId){
+  if(!canAcceptReorderDrop(sideKey, targetId)) return;
+  const draggedId = state.reorderDrag.itemId;
+  moveItemById(sideNameFromKey(sideKey), draggedId, targetId);
+  selectItem(sideKey, draggedId, false);
+  clearReorderDrag();
+}
+
+function moveItemByDelta(sideKey, itemId, delta){
+  const side = String(sideKey) === "151" ? "left" : "right";
+  const items = getItems(side);
+  const index = items.findIndex((item) => String(item.id) === String(itemId));
+  if(index < 0) return;
+  const nextIndex = clamp(index + Number(delta), 0, items.length - 1);
+  if(nextIndex === index) return;
+  const [moved] = items.splice(index, 1);
+  items.splice(nextIndex, 0, moved);
+  renderAll();
+}
+
+function setItemUnmatched(sideKey, itemId, nextValue){
+  const item = itemsForSideKey(sideKey).find((entry) => String(entry.id) === String(itemId));
+  if(!item) return;
+  item.unmatched = Boolean(nextValue);
+  if(item.unmatched){
+    item.active = true;
+  }
+  renderAll();
+}
+
+function toggleItemActive(sideKey, itemId){
+  const item = itemsForSideKey(sideKey).find((entry) => String(entry.id) === String(itemId));
+  if(!item) return;
+  item.active = !item.active;
+  if(!item.active){
+    item.unmatched = false;
+  }
+  renderAll();
+}
+
+function applyItemAction(sideKey, action){
+  const item = selectedRowItem(sideKey);
+  if(!item) return;
+  if(action === "up"){
+    moveItemByDelta(sideKey, item.id, -1);
+    return;
+  }
+  if(action === "down"){
+    moveItemByDelta(sideKey, item.id, 1);
+    return;
+  }
+  if(action === "unmatched"){
+    setItemUnmatched(sideKey, item.id, !item.unmatched);
+    return;
+  }
+  if(action === "toggle-active"){
+    toggleItemActive(sideKey, item.id);
+  }
+}
+
+function renderActionControls(){
+  const row = selectedPreviewRow();
+  if(row){
+    const leftTxt = row.leftItem ? `151:${row.leftItem.tube_idx}` : "151:-";
+    const rightTxt = row.rightItem ? `152:${row.rightItem.tube_idx}` : "152:-";
+    els.selectedRowLabel.textContent = `Fila seleccionada: ${leftTxt} <-> ${rightTxt}`;
+  } else {
+    els.selectedRowLabel.textContent = "Sin fila seleccionada.";
+  }
+
+  ["151", "152"].forEach((sideKey) => {
+    const item = selectedRowItem(sideKey);
+    const viewer = els.viewers[String(sideKey)];
+    const tablePrefix = sideKey === "151" ? "table151" : "table152";
+    const upBtn = els[`${tablePrefix}Up`];
+    const downBtn = els[`${tablePrefix}Down`];
+    const unmatchedBtn = els[`${tablePrefix}Unmatched`];
+    const deactivateBtn = els[`${tablePrefix}Deactivate`];
+    const buttons = [viewer.moveUp, viewer.moveDown, viewer.unmatched, viewer.deactivate, upBtn, downBtn, unmatchedBtn, deactivateBtn];
+    buttons.forEach((button) => {
+      button.disabled = !item;
+    });
+    if(item){
+      viewer.unmatched.classList.toggle("active", Boolean(item.unmatched));
+      unmatchedBtn.classList.toggle("active", Boolean(item.unmatched));
+      const activeLabel = item.active ? "Cancelar" : "Reactivar";
+      viewer.deactivate.textContent = activeLabel;
+      deactivateBtn.textContent = activeLabel;
+    } else {
+      viewer.unmatched.classList.remove("active");
+      unmatchedBtn.classList.remove("active");
+      viewer.deactivate.textContent = "Cancelar";
+      deactivateBtn.textContent = "Cancelar";
+    }
+  });
+}
+
+function startViewerPan(sideKey, event){
+  if(event.button !== 1) return;
+  const viewer = els.viewers[String(sideKey)];
+  const meta = IMAGE_META[String(sideKey)] || {};
+  if(!viewer || !meta.available) return;
+  event.preventDefault();
+  state.pan = {
+    side: String(sideKey),
+    startClientX: event.clientX,
+    startClientY: event.clientY,
+    startScrollLeft: viewer.scroll.scrollLeft,
+    startScrollTop: viewer.scroll.scrollTop,
+  };
+  viewer.scroll.classList.add("panning");
+}
+
+function moveViewerPan(event){
+  if(!state.pan) return;
+  const viewer = els.viewers[String(state.pan.side)];
+  if(!viewer) return;
+  event.preventDefault();
+  const dx = event.clientX - state.pan.startClientX;
+  const dy = event.clientY - state.pan.startClientY;
+  viewer.scroll.scrollLeft = Math.max(0, state.pan.startScrollLeft - dx);
+  viewer.scroll.scrollTop = Math.max(0, state.pan.startScrollTop - dy);
+}
+
+function endViewerPan(){
+  if(!state.pan) return;
+  const viewer = els.viewers[String(state.pan.side)];
+  if(viewer){
+    viewer.scroll.classList.remove("panning");
+  }
+  state.pan = null;
+}
+
+function startViewerMarkerDrag(sideKey, itemId, event){
+  if(event.button !== 0) return;
+  const viewer = els.viewers[String(sideKey)];
+  const meta = IMAGE_META[String(sideKey)] || {};
+  if(!viewer || !meta.available) return;
+  event.preventDefault();
+  event.stopPropagation();
+  state.viewerDrag = {
+    sideKey: String(sideKey),
+    itemId: String(itemId),
+    startClientX: event.clientX,
+    startClientY: event.clientY,
+    moved: false,
+    targetId: null,
+  };
+}
+
+function nearestViewerTarget(sideKey, clientX, clientY){
+  const viewer = els.viewers[String(sideKey)];
+  const meta = IMAGE_META[String(sideKey)] || {};
+  if(!viewer || !meta.available) return null;
+  const rect = viewer.overlay.getBoundingClientRect();
+  if(!rect.width || !rect.height) return null;
+  const px = ((clientX - rect.left) / rect.width) * Number(meta.width);
+  const py = ((clientY - rect.top) / rect.height) * Number(meta.height);
+  const markers = Array.isArray(meta.markers) ? meta.markers : [];
+  let best = null;
+  markers.forEach((marker) => {
+    if(String(marker.id) === String(state.viewerDrag?.itemId)) return;
+    const dx = Number(marker.x) - px;
+    const dy = Number(marker.y) - py;
+    const distance = Math.sqrt((dx * dx) + (dy * dy));
+    if(distance > 28) return;
+    if(!best || distance < best.distance){
+      best = {id: String(marker.id), distance};
+    }
+  });
+  return best ? best.id : null;
+}
+
+function moveViewerMarkerDrag(event){
+  if(!state.viewerDrag) return;
+  event.preventDefault();
+  const drag = state.viewerDrag;
+  const dx = event.clientX - drag.startClientX;
+  const dy = event.clientY - drag.startClientY;
+  if(!drag.moved && ((Math.abs(dx) >= 4) || (Math.abs(dy) >= 4))){
+    drag.moved = true;
+  }
+  if(!drag.moved) return;
+  const targetId = nearestViewerTarget(drag.sideKey, event.clientX, event.clientY);
+  drag.targetId = targetId;
+  clearViewerDropTargets();
+  if(targetId){
+    document.querySelectorAll(`.viewer-click-hit[data-select-side="${drag.sideKey}"][data-item-id="${targetId}"], .viewer-tube-point[data-select-side="${drag.sideKey}"][data-item-id="${targetId}"]`)
+      .forEach((node) => node.classList.add("drag-target"));
+  }
+}
+
+function endViewerMarkerDrag(){
+  if(!state.viewerDrag) return;
+  const drag = state.viewerDrag;
+  clearViewerDropTargets();
+  state.viewerDrag = null;
+  if(drag.moved && drag.targetId){
+    moveItemById(sideNameFromKey(drag.sideKey), drag.itemId, drag.targetId);
+    selectItem(drag.sideKey, drag.itemId, false);
+    const suppression = {sideKey: String(drag.sideKey), itemId: String(drag.itemId)};
+    state.suppressViewerClick = suppression;
+    setTimeout(() => {
+      if(state.suppressViewerClick === suppression){
+        state.suppressViewerClick = null;
+      }
+    }, 0);
+  }
+}
+
+function resetOrder(){
+  const bySource = (a, b) => Number(a.source_order) - Number(b.source_order);
+  state.leftItems.sort(bySource);
+  state.rightItems.sort(bySource);
+  [...state.leftItems, ...state.rightItems].forEach((item) => {
+    item.active = true;
+    item.unmatched = false;
+    item.notes = "";
+    if(item.side === "152"){
+      item.relative_position = item.offset_px !== null && Number(item.offset_px) < 0 ? "before" : "after";
+    }
+  });
+  renderAll();
+}
+
+async function submit(confirmed, action=""){
+  if(state.submitted) return;
+  state.submitted = true;
+  try{
+    const response = await fetch("/result", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        confirmed,
+        action,
+        leftItems: state.leftItems,
+        rightItems: state.rightItems,
+      }),
+    });
+    const payload = await response.json();
+    if(!response.ok || payload.error){
+      throw new Error(payload.error || `HTTP ${response.status}`);
+    }
+    if(payload.confirmed){
+      els.headerSub.textContent = `Guardado: ${payload.xlsx_path}`;
+    }else if(payload.closed){
+      els.headerSub.textContent = "Cancelado. Puedes volver al notebook o script.";
+    }else{
+      state.submitted = false;
+      return;
+    }
+    setTimeout(() => window.close(), 350);
+  }catch(err){
+    state.submitted = false;
+    alert(`No se pudo guardar el matcher: ${err.message}`);
+  }
+}
+
+function renderAll(){
+  els.headerSub.textContent = `${INITIAL.left.image_name || INITIAL.left.dataset_name || "cam151"}  <->  ${INITIAL.right.image_name || INITIAL.right.dataset_name || "cam152"}`;
+  els.leftTitle.textContent = `Cam151 (${state.leftItems.length})`;
+  els.rightTitle.textContent = `Cam152 (${state.rightItems.length})`;
+  const rows = buildPreviewRows();
+  renderList("left");
+  renderList("right");
+  renderDiagram(rows);
+  renderPreview(rows);
+  renderViewers();
+  renderActionControls();
+  applySelectionHighlights();
+}
+
+Object.entries(els.viewers).forEach(([sideKey, viewer]) => {
+  viewer.zoomIn.addEventListener("click", () => setViewerZoom(sideKey, (state.zoom[sideKey] || 1) * 1.2));
+  viewer.zoomOut.addEventListener("click", () => setViewerZoom(sideKey, (state.zoom[sideKey] || 1) / 1.2));
+  viewer.zoomReset.addEventListener("click", () => setViewerZoom(sideKey, 1));
+  viewer.moveUp.addEventListener("click", () => applyItemAction(sideKey, "up"));
+  viewer.moveDown.addEventListener("click", () => applyItemAction(sideKey, "down"));
+  viewer.unmatched.addEventListener("click", () => applyItemAction(sideKey, "unmatched"));
+  viewer.deactivate.addEventListener("click", () => applyItemAction(sideKey, "toggle-active"));
+  viewer.scroll.addEventListener("mousedown", (event) => startViewerPan(sideKey, event));
+  viewer.scroll.addEventListener("auxclick", (event) => {
+    if(event.button === 1){
+      event.preventDefault();
+    }
+  });
+  viewer.scroll.addEventListener("wheel", (event) => {
+    if(!event.ctrlKey) return;
+    event.preventDefault();
+    const factor = event.deltaY < 0 ? 1.12 : (1 / 1.12);
+    setViewerZoom(sideKey, (state.zoom[sideKey] || 1) * factor, event);
+  }, {passive: false});
+});
+
+els.table151Up.addEventListener("click", () => applyItemAction("151", "up"));
+els.table151Down.addEventListener("click", () => applyItemAction("151", "down"));
+els.table151Unmatched.addEventListener("click", () => applyItemAction("151", "unmatched"));
+els.table151Deactivate.addEventListener("click", () => applyItemAction("151", "toggle-active"));
+els.table152Up.addEventListener("click", () => applyItemAction("152", "up"));
+els.table152Down.addEventListener("click", () => applyItemAction("152", "down"));
+els.table152Unmatched.addEventListener("click", () => applyItemAction("152", "unmatched"));
+els.table152Deactivate.addEventListener("click", () => applyItemAction("152", "toggle-active"));
+
+els.resetBtn.addEventListener("click", resetOrder);
+els.cancelBtn.addEventListener("click", () => submit(false, "cancel"));
+els.confirmBtn.addEventListener("click", () => submit(true, "confirm"));
+window.addEventListener("mousemove", moveViewerPan);
+window.addEventListener("mousemove", moveViewerMarkerDrag);
+window.addEventListener("mouseup", endViewerPan);
+window.addEventListener("mouseup", endViewerMarkerDrag);
+window.addEventListener("keydown", (event) => {
+  if(event.key === "Escape"){
+    event.preventDefault();
+    submit(false, "cancel");
+  }
+  if(event.key === "Enter" && (event.ctrlKey || event.metaKey)){
+    event.preventDefault();
+    submit(true, "confirm");
+  }
+});
+window.addEventListener("beforeunload", () => {
+  if(!state.submitted){
+    navigator.sendBeacon("/result", JSON.stringify({confirmed: false, action: "close"}));
+  }
+});
+window.addEventListener("resize", () => requestAnimationFrame(drawDiagramLinks));
+
+renderAll();
+</script>
+</body>
+</html>

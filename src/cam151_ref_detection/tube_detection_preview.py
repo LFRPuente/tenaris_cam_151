@@ -24,6 +24,11 @@ class TubeDetectionPreviewResult:
     px_per_in: float | None
     reference_lines: list[dict]
     scale_samples: list[dict]
+    processing_mode: str
+    processing_stage: str
+    pitch_lo: float | None
+    pitch_hi: float | None
+    rejected_tube_gaps: list[dict]
 
 
 @lru_cache(maxsize=1)
@@ -117,48 +122,97 @@ def _project_xy(transform: np.ndarray, x_value: float, y_value: float) -> tuple[
     return (float(x_out), float(y_out))
 
 
+def _line_is_warp_space(line: dict) -> bool:
+    return str(line.get("kind") or "") == "warp_scale_ref" or str(line.get("coordinate_space") or "") == "warp"
+
+
 def _compute_reference_measurements(
     points: list[dict],
     homography_matrix: list[list[float]],
+    *,
+    lines: list[dict] | None = None,
+    cam152_mode: bool = False,
 ) -> tuple[float | None, list[dict], list[dict]]:
     transform = np.asarray(homography_matrix, dtype=np.float32)
     if transform.shape != (3, 3):
         return None, [], []
 
-    scale_specs = [
-        ("top_03", "top_04", 38.75, "top_03-04"),
-        ("mark_05", "mark_06", 38.75, "mark_05-06"),
-        ("mark_03", "mark_04", 47.75, "mark_03-04"),
-    ]
     scale_samples: list[dict] = []
-    for label_a, label_b, dist_in, name in scale_specs:
-        point_a = _warp_point(transform, _find_point_by_label(points, label_a))
-        point_b = _warp_point(transform, _find_point_by_label(points, label_b))
-        if point_a is None or point_b is None:
-            continue
-        dx_px = abs(float(point_b[0] - point_a[0]))
-        if dx_px <= 1e-6:
-            continue
-        scale_samples.append(
-            {
-                "label": name,
-                "distance_in": float(dist_in),
-                "distance_px": float(dx_px),
-                "px_per_in": float(dx_px / float(dist_in)),
-                "p1": [float(point_a[0]), float(point_a[1])],
-                "p2": [float(point_b[0]), float(point_b[1])],
-            }
-        )
+
+    if True:
+        # Escala desde lineas con real_distance anotado en el TOML.
+        for line in (lines or []):
+            dist_in = line.get("real_distance")
+            if dist_in is None:
+                continue
+            is_warp_space = _line_is_warp_space(line)
+            if is_warp_space:
+                # Coordenadas ya en espacio warp — usar directamente sin transformar.
+                x1w = float(line.get("x1", 0.0))
+                y1w = float(line.get("y1", 0.0))
+                x2w = float(line.get("x2", 0.0))
+                y2w = float(line.get("y2", 0.0))
+                dx_px = abs(x2w - x1w)
+                p1 = [x1w, y1w]
+                p2 = [x2w, y2w]
+            else:
+                p1_src = {"x": float(line.get("x1", 0.0)), "y": float(line.get("y1", 0.0))}
+                p2_src = {"x": float(line.get("x2", 0.0)), "y": float(line.get("y2", 0.0))}
+                p1 = _warp_point(transform, p1_src)
+                p2 = _warp_point(transform, p2_src)
+                if p1 is None or p2 is None:
+                    continue
+                dx_px = abs(float(p2[0] - p1[0]))
+            if dx_px <= 1e-6:
+                continue
+            label = str(line.get("label") or line.get("id") or "line_ref")
+            scale_samples.append(
+                {
+                    "label": label,
+                    "distance_in": float(dist_in),
+                    "distance_px": float(dx_px),
+                    "px_per_in": float(dx_px / float(dist_in)),
+                    "p1": [float(p1[0]), float(p1[1])],
+                    "p2": [float(p2[0]), float(p2[1])],
+                }
+            )
+    if not cam152_mode:
+        # cam151: escala desde pares de puntos con distancia conocida.
+        scale_specs = [
+            ("top_03", "top_04", 38.75, "top_03-04"),
+            ("mark_05", "mark_06", 38.75, "mark_05-06"),
+            ("mark_03", "mark_04", 47.75, "mark_03-04"),
+        ]
+        for label_a, label_b, dist_in, name in scale_specs:
+            point_a = _warp_point(transform, _find_point_by_label(points, label_a))
+            point_b = _warp_point(transform, _find_point_by_label(points, label_b))
+            if point_a is None or point_b is None:
+                continue
+            dx_px = abs(float(point_b[0] - point_a[0]))
+            if dx_px <= 1e-6:
+                continue
+            scale_samples.append(
+                {
+                    "label": name,
+                    "distance_in": float(dist_in),
+                    "distance_px": float(dx_px),
+                    "px_per_in": float(dx_px / float(dist_in)),
+                    "p1": [float(point_a[0]), float(point_a[1])],
+                    "p2": [float(point_b[0]), float(point_b[1])],
+                }
+            )
 
     px_per_in = None
     if scale_samples:
         px_per_in = float(np.median(np.asarray([sample["px_per_in"] for sample in scale_samples], np.float32)))
 
+    # Lineas de referencia verticales: cam152 usa mark_02->mark_03; cam151 usa TR->BR.
     reference_lines: list[dict] = []
-    ref_specs = [
-        ("ref_01", "top_03", "mark_06"),
-        ("ref_02", "top_04", "mark_05"),
-    ]
+    ref_specs = (
+        [("ref_01", "mark_02", "mark_03")]
+        if cam152_mode
+        else [("ref_02", "top_02", "base_02")]
+    )
     for ref_label, top_label, bottom_label in ref_specs:
         top_pt = _warp_point(transform, _find_point_by_label(points, top_label))
         bottom_pt = _warp_point(transform, _find_point_by_label(points, bottom_label))
@@ -177,11 +231,12 @@ def _compute_reference_measurements(
     return px_per_in, reference_lines, scale_samples
 
 
-def _compute_reference_source_lines(points: list[dict]) -> list[dict]:
-    ref_specs = [
-        ("ref_01", "top_03", "mark_06"),
-        ("ref_02", "top_04", "mark_05"),
-    ]
+def _compute_reference_source_lines(points: list[dict], *, cam152_mode: bool = False) -> list[dict]:
+    ref_specs = (
+        [("ref_01", "mark_02", "mark_03")]
+        if cam152_mode
+        else [("ref_02", "top_02", "base_02")]
+    )
     source_lines: list[dict] = []
     for ref_label, top_label, bottom_label in ref_specs:
         top_pt = _find_point_by_label(points, top_label)
@@ -1652,7 +1707,95 @@ def _extend_periodic_seams(
     return deduped
 
 
-def _detect_tubes_in_warp(warp_bgr: np.ndarray) -> tuple[np.ndarray, dict]:
+def _row_max_dark_run(mask_bool: np.ndarray) -> np.ndarray:
+    runs: list[int] = []
+    for row in np.asarray(mask_bool, bool):
+        padded = np.r_[False, row, False]
+        changes = np.flatnonzero(padded[1:] != padded[:-1])
+        lengths = changes[1::2] - changes[::2]
+        runs.append(int(lengths.max()) if lengths.size else 0)
+    return np.asarray(runs, np.float32)
+
+
+def _continuous_ranges(indices: np.ndarray, min_len: int) -> list[tuple[int, int]]:
+    values = np.asarray(indices, np.int32).reshape(-1)
+    if values.size == 0:
+        return []
+
+    ranges: list[tuple[int, int]] = []
+    start = prev = int(values[0])
+    for raw in values[1:].tolist():
+        value = int(raw)
+        if value == prev + 1:
+            prev = value
+            continue
+        if prev - start + 1 >= int(min_len):
+            ranges.append((start, prev))
+        start = prev = value
+
+    if prev - start + 1 >= int(min_len):
+        ranges.append((start, prev))
+    return ranges
+
+
+def _pick_cam152_tube_stack_range(gray_img: np.ndarray) -> tuple[int, int, int, int, int, np.ndarray]:
+    dark_thr = int(round(np.percentile(gray_img, 38)))
+    dark_thr = max(95, min(170, dark_thr))
+    dark_mask = gray_img <= dark_thr
+
+    run_profile = _row_max_dark_run(dark_mask)
+    run_profile_smooth = _smooth_1d(run_profile, 11)
+    min_stack_y = int(round(0.10 * float(gray_img.shape[0])))  # era 0.25
+    # Usar percentil 25 del perfil como umbral adaptativo (no fijo 0.14×w que es demasiado alto)
+    nonzero_runs = run_profile_smooth[run_profile_smooth > 10]
+    if nonzero_runs.size >= 10:
+        min_dark_run = max(50, int(round(float(np.percentile(nonzero_runs, 25)))))
+    else:
+        min_dark_run = max(50, int(round(0.06 * float(gray_img.shape[1]))))
+
+    active = run_profile_smooth >= float(min_dark_run)
+    active[:min_stack_y] = False
+    ranges = _continuous_ranges(np.flatnonzero(active), min_len=8)
+    if not ranges:
+        return 0, gray_img.shape[0] - 1, 0, gray_img.shape[1], int(dark_thr), run_profile_smooth
+
+    # El paquete completo va desde el primer rango activo hasta el último,
+    # independientemente de separadores físicos intermedios.
+    stack_y0 = ranges[0][0]
+    stack_y1 = ranges[-1][1]
+
+    margin = max(20, int(round(0.01 * float(gray_img.shape[0]))))
+    stack_y0 = max(0, stack_y0 - margin)
+    stack_y1 = min(gray_img.shape[0] - 1, stack_y1 + margin)
+
+    ys, xs = np.where(dark_mask[stack_y0 : stack_y1 + 1])
+    if xs.size:
+        stack_x0 = max(0, int(np.percentile(xs, 3)) - 10)
+        stack_x1 = min(gray_img.shape[1], int(np.percentile(xs, 97)) + 11)
+    else:
+        stack_x0, stack_x1 = 0, gray_img.shape[1]
+
+    if stack_x1 <= stack_x0 + 24:
+        stack_x0, stack_x1 = 0, gray_img.shape[1]
+    with open("debug.txt", "a") as _f:
+        _f.write(f"[pick_range] img={gray_img.shape} dark_thr={dark_thr} min_dark_run={min_dark_run} min_stack_y={min_stack_y} ranges={ranges} stack_y0={stack_y0} stack_y1={stack_y1}\n")
+    return int(stack_y0), int(stack_y1), int(stack_x0), int(stack_x1), int(dark_thr), run_profile_smooth
+
+
+def _is_cam152_image(image_path: str | Path) -> bool:
+    stem = Path(image_path).stem.lower()
+    return stem in {"cam_152", "cam152"} or stem.startswith("cam_152_") or stem.startswith("cam152_")
+
+
+def _needs_backend_mirror(image_path: str | Path) -> bool:
+    # cam_152.jpeg ya está espejada en disco — solo las variantes cam_152_* necesitan mirror.
+    stem = Path(image_path).stem.lower()
+    return stem.startswith("cam_152_") or stem.startswith("cam152_")
+
+
+def _detect_tubes_in_warp(warp_bgr: np.ndarray, *, cam152_mode: bool = False) -> tuple[np.ndarray, dict]:
+    with open("debug.txt", "a") as _f:
+        _f.write(f"cam152_mode={cam152_mode} shape={warp_bgr.shape if warp_bgr is not None else None}\n")
     if warp_bgr is None or warp_bgr.size == 0:
         raise RuntimeError("warp image is empty")
 
@@ -1665,112 +1808,197 @@ def _detect_tubes_in_warp(warp_bgr: np.ndarray) -> tuple[np.ndarray, dict]:
 
     h, w = gray.shape[:2]
 
-    # The vertical tube-period profile is more stable near the left edge of the
-    # warp. Farther right, shadows and tube tips distort the seam periodicity.
-    strip_x0 = 0
-    strip_x1 = min(w - 8, max(54, int(round(0.14 * float(w)))))
-    if strip_x1 <= strip_x0 + 20:
-        strip_x0 = 0
-        strip_x1 = min(w, max(32, int(round(0.18 * float(w)))))
-    gray_strip = gray[:, strip_x0:strip_x1]
+    if cam152_mode:
+        tube_stack_y0, tube_stack_y1, strip_x0, strip_x1, _tube_dark_thr, _tube_run_profile = _pick_cam152_tube_stack_range(gray)
+        gray_strip = gray[:, strip_x0:strip_x1]
 
-    blur_x = cv2.GaussianBlur(gray_strip, (71, 1), 0)
-    dark_profile = 255.0 - np.mean(blur_x.astype(np.float32), axis=1)
-    profile_smooth = _smooth_1d(dark_profile, 9)
-    profile_norm = _normalize_01(profile_smooth)
+        strip_blur_x = cv2.GaussianBlur(gray_strip, (9, 1), 0)
+        dark_profile = 255.0 - np.percentile(strip_blur_x.astype(np.float32), 25, axis=1)
+        grad_y = cv2.Sobel(cv2.GaussianBlur(gray_strip.astype(np.float32), (7, 3), 0), cv2.CV_32F, 0, 1, ksize=3)
+        edge_profile = np.percentile(np.abs(grad_y), 80, axis=1)
 
-    if profile_norm.size == 0:
-        raise RuntimeError("empty warp profile")
+        dark_score = _normalize_01(_smooth_1d(dark_profile, 7))
+        edge_score = _normalize_01(_smooth_1d(edge_profile, 5))
+        profile_norm = _normalize_01((0.65 * dark_score) + (0.35 * edge_score))
+        profile_norm[:tube_stack_y0] = 0.0
+        profile_norm[tube_stack_y1 + 1 :] = 0.0
+        if profile_norm.size == 0:
+            raise RuntimeError("empty warp profile")
 
-    strong_rows = np.flatnonzero(profile_norm >= max(0.30, float(np.percentile(profile_norm, 70))))
-    energy_start_index = int(strong_rows[0]) if strong_rows.size else 0
-    profile_cut = profile_norm[energy_start_index:]
-    dominant_period, _autocorr = _estimate_dominant_period(profile_cut, min_period_frac=0.03, max_period_frac=0.18)
+        energy_start_index = int(tube_stack_y0)
+        profile_cut = profile_norm[tube_stack_y0 : tube_stack_y1 + 1]
+        dominant_period, _autocorr = _estimate_dominant_period(profile_cut, min_period_frac=0.04, max_period_frac=0.14)
 
-    base_min_distance = 16
-    if dominant_period is not None and np.isfinite(dominant_period):
-        base_min_distance = max(12, int(round(0.65 * float(dominant_period))))
-    min_distance_top = max(8, int(round(0.55 * float(base_min_distance))))
-    min_distance_bottom = max(min_distance_top + 2, int(round(1.00 * float(base_min_distance))))
-    base_threshold = max(0.32, float(np.percentile(profile_norm, 72)))
+        expected_tube_pitch = float(dominant_period) if dominant_period is not None and np.isfinite(dominant_period) else 22.0
+        pitch_lo = max(8.0, 0.60 * expected_tube_pitch)
+        pitch_hi = max(pitch_lo + 1.0, 1.35 * expected_tube_pitch)
+        # Dentro del paquete todo pico es un límite de tubo → threshold=0, min_distance mínimo físico.
+        base_min_distance = max(6, int(round(0.30 * expected_tube_pitch)))
 
-    first_peak_seed = None
-    seed_period = float(dominant_period) if dominant_period is not None and np.isfinite(dominant_period) else float(base_min_distance)
-    seed_lo = min(profile_norm.size - 2, max(1, energy_start_index + 2))
-    seed_hi = min(profile_norm.size - 2, max(seed_lo + 2, energy_start_index + int(round(0.95 * seed_period))))
-    first_threshold = min(base_threshold, max(0.18, 0.80 * float(base_threshold)))
-    seed_candidates: list[int] = []
-    for idx in range(seed_lo, seed_hi + 1):
-        if profile_norm[idx] >= first_threshold and profile_norm[idx] >= profile_norm[idx - 1] and profile_norm[idx] > profile_norm[idx + 1]:
-            seed_candidates.append(int(idx))
-    if seed_candidates:
-        first_peak_seed = int(seed_candidates[0])
+        peaks_index = [
+            int(tube_stack_y0 + peak)
+            for peak in _find_local_peaks_1d(profile_cut, threshold=0.0, min_distance=base_min_distance)
+        ]
+
+        gap_lo_seed = int(round(pitch_lo))
+        gap_hi_seed = int(round(pitch_hi))
+        run_peaks, run_period = _find_best_periodic_peak_run(peaks_index, gap_lo=gap_lo_seed, gap_hi=gap_hi_seed, min_len=6)
+        median_period = _median_period(run_peaks or peaks_index)
+        period_used = run_period or median_period or dominant_period or expected_tube_pitch or 22.0
+
+        valid_observed_peaks = [int(p) for p in peaks_index if tube_stack_y0 <= int(p) <= tube_stack_y1]
+
+        # Corregir período si _find_best_periodic_peak_run detectó 2× el período real
+        # (picos alternos fuerte/débil cuando threshold=0 genera picos densos).
+        if len(valid_observed_peaks) >= 4:
+            all_gaps = np.diff(np.asarray(sorted(valid_observed_peaks), np.float32))
+            median_all_gap = float(np.median(all_gaps))
+            if period_used > 1.6 * median_all_gap and median_all_gap >= 8.0:
+                period_used = median_all_gap
+
+        # Usar todos los picos válidos (no solo run_peaks) ya que threshold=0 los acepta todos.
+        peaks_filled = _fill_missing_seams(valid_observed_peaks, period_used)
+        peaks_filled = _extend_periodic_seams(
+            peaks_filled,
+            valid_observed_peaks,
+            period_used,
+            profile_norm,
+            y_min=max(0, tube_stack_y0 - int(round(0.35 * float(period_used)))),
+            y_max=min(int(profile_norm.size - 1), tube_stack_y1 + int(round(0.35 * float(period_used)))),
+        )
+
+        lo_gap = max(8.0, 0.60 * float(period_used))
+        hi_gap = max(lo_gap + 1.0, 1.35 * float(period_used))
+        tube_top_rows_list = []
+        tube_bottom_rows_list = []
+        rejected_tube_gaps: list[dict] = []
+        for prev, curr in zip(peaks_filled[:-1], peaks_filled[1:]):
+            gap = float(curr - prev)
+            gap_in_range = lo_gap <= gap <= hi_gap
+            both_inside_pack = (
+                tube_stack_y0 <= float(prev) <= tube_stack_y1
+                and tube_stack_y0 <= float(curr) <= tube_stack_y1
+            )
+            if gap_in_range or both_inside_pack:
+                tube_top_rows_list.append(int(prev))
+                tube_bottom_rows_list.append(int(curr))
+            else:
+                rejected_tube_gaps.append(
+                    {
+                        "from_y": int(prev),
+                        "to_y": int(curr),
+                        "distance_px": float(gap),
+                        "reason": "alto" if gap > hi_gap else "bajo",
+                    }
+                )
     else:
-        local_seed = profile_norm[seed_lo : seed_hi + 1]
-        if local_seed.size:
-            seed_arg = int(seed_lo + int(np.argmax(local_seed)))
-            if float(profile_norm[seed_arg]) >= max(0.16, 0.70 * float(base_threshold)):
-                first_peak_seed = int(seed_arg)
+        # The vertical tube-period profile is more stable near the left edge of
+        # cam151 warps. Farther right, shadows and tube tips distort the seam periodicity.
+        strip_x0 = 0
+        strip_x1 = min(w - 8, max(54, int(round(0.14 * float(w)))))
+        if strip_x1 <= strip_x0 + 20:
+            strip_x0 = 0
+            strip_x1 = min(w, max(32, int(round(0.18 * float(w)))))
+        gray_strip = gray[:, strip_x0:strip_x1]
 
-    raw_peak_candidates: list[int] = []
-    for idx in range(1, profile_norm.size - 1):
-        if profile_norm[idx] >= base_threshold and profile_norm[idx] >= profile_norm[idx - 1] and profile_norm[idx] > profile_norm[idx + 1]:
-            if idx >= energy_start_index:
-                raw_peak_candidates.append(int(idx))
+        blur_x = cv2.GaussianBlur(gray_strip, (71, 1), 0)
+        dark_profile = 255.0 - np.mean(blur_x.astype(np.float32), axis=1)
+        profile_smooth = _smooth_1d(dark_profile, 9)
+        profile_norm = _normalize_01(profile_smooth)
 
-    def _local_min_gap(pos_idx: int) -> int:
-        denom = max(1.0, float(profile_norm.size - 1 - energy_start_index))
-        rel = (float(pos_idx) - float(energy_start_index)) / denom
-        rel = min(1.0, max(0.0, rel))
-        gap = (1.0 - rel) * float(min_distance_top) + rel * float(min_distance_bottom)
-        return max(1, int(round(gap)))
+        if profile_norm.size == 0:
+            raise RuntimeError("empty warp profile")
 
-    peaks_index: list[int] = []
-    for cand in raw_peak_candidates:
-        if not peaks_index:
-            peaks_index.append(int(cand))
-            continue
-        gap_needed = _local_min_gap(cand)
-        if int(cand) - int(peaks_index[-1]) >= gap_needed:
-            peaks_index.append(int(cand))
-        elif float(profile_norm[cand]) > float(profile_norm[peaks_index[-1]]):
-            peaks_index[-1] = int(cand)
+        strong_rows = np.flatnonzero(profile_norm >= max(0.30, float(np.percentile(profile_norm, 70))))
+        energy_start_index = int(strong_rows[0]) if strong_rows.size else 0
+        profile_cut = profile_norm[energy_start_index:]
+        dominant_period, _autocorr = _estimate_dominant_period(profile_cut, min_period_frac=0.03, max_period_frac=0.18)
 
-    if first_peak_seed is not None:
-        if not peaks_index:
-            peaks_index = [int(first_peak_seed)]
+        base_min_distance = 16
+        if dominant_period is not None and np.isfinite(dominant_period):
+            base_min_distance = max(12, int(round(0.65 * float(dominant_period))))
+        min_distance_top = max(8, int(round(0.55 * float(base_min_distance))))
+        min_distance_bottom = max(min_distance_top + 2, int(round(1.00 * float(base_min_distance))))
+        base_threshold = max(0.32, float(np.percentile(profile_norm, 72)))
+
+        first_peak_seed = None
+        seed_period = float(dominant_period) if dominant_period is not None and np.isfinite(dominant_period) else float(base_min_distance)
+        seed_lo = min(profile_norm.size - 2, max(1, energy_start_index + 2))
+        seed_hi = min(profile_norm.size - 2, max(seed_lo + 2, energy_start_index + int(round(0.95 * seed_period))))
+        first_threshold = min(base_threshold, max(0.18, 0.80 * float(base_threshold)))
+        seed_candidates: list[int] = []
+        for idx in range(seed_lo, seed_hi + 1):
+            if profile_norm[idx] >= first_threshold and profile_norm[idx] >= profile_norm[idx - 1] and profile_norm[idx] > profile_norm[idx + 1]:
+                seed_candidates.append(int(idx))
+        if seed_candidates:
+            first_peak_seed = int(seed_candidates[0])
         else:
-            first_gap_needed = max(4, int(round(0.35 * float(min_distance_top))))
-            if int(first_peak_seed) < int(peaks_index[0]) and (int(peaks_index[0]) - int(first_peak_seed)) >= first_gap_needed:
-                peaks_index = [int(first_peak_seed)] + peaks_index
+            local_seed = profile_norm[seed_lo : seed_hi + 1]
+            if local_seed.size:
+                seed_arg = int(seed_lo + int(np.argmax(local_seed)))
+                if float(profile_norm[seed_arg]) >= max(0.16, 0.70 * float(base_threshold)):
+                    first_peak_seed = int(seed_arg)
 
-    run_peaks, run_period = _find_best_periodic_peak_run(peaks_index, gap_lo=14, gap_hi=34, min_len=6)
-    median_period = _median_period(run_peaks or peaks_index)
-    period_used = run_period or median_period or dominant_period or 22.0
-    peaks_filled = _fill_missing_seams(run_peaks or peaks_index, period_used)
-    peaks_filled = _extend_periodic_seams(
-        peaks_filled,
-        peaks_index,
-        period_used,
-        profile_norm,
-        y_min=max(0, energy_start_index - int(round(0.6 * float(period_used)))),
-        y_max=int(profile_norm.size - 1),
-    )
-    lo_gap = max(12.0, 0.55 * float(period_used))
-    hi_gap = max(lo_gap + 1.0, 1.55 * float(period_used))
+        raw_peak_candidates: list[int] = []
+        for idx in range(1, profile_norm.size - 1):
+            if profile_norm[idx] >= base_threshold and profile_norm[idx] >= profile_norm[idx - 1] and profile_norm[idx] > profile_norm[idx + 1]:
+                if idx >= energy_start_index:
+                    raw_peak_candidates.append(int(idx))
 
-    tube_top_rows_list: list[int] = []
-    tube_bottom_rows_list: list[int] = []
-    if peaks_filled:
-        top_gap = float(peaks_filled[0] - energy_start_index)
-        if lo_gap <= top_gap <= hi_gap:
-            tube_top_rows_list.append(int(energy_start_index))
-            tube_bottom_rows_list.append(int(peaks_filled[0]))
-    for prev, curr in zip(peaks_filled[:-1], peaks_filled[1:]):
-        gap = float(curr - prev)
-        if lo_gap <= gap <= hi_gap:
-            tube_top_rows_list.append(int(prev))
-            tube_bottom_rows_list.append(int(curr))
+        def _local_min_gap(pos_idx: int) -> int:
+            denom = max(1.0, float(profile_norm.size - 1 - energy_start_index))
+            rel = (float(pos_idx) - float(energy_start_index)) / denom
+            rel = min(1.0, max(0.0, rel))
+            gap = (1.0 - rel) * float(min_distance_top) + rel * float(min_distance_bottom)
+            return max(1, int(round(gap)))
+
+        peaks_index = []
+        for cand in raw_peak_candidates:
+            if not peaks_index:
+                peaks_index.append(int(cand))
+                continue
+            gap_needed = _local_min_gap(cand)
+            if int(cand) - int(peaks_index[-1]) >= gap_needed:
+                peaks_index.append(int(cand))
+            elif float(profile_norm[cand]) > float(profile_norm[peaks_index[-1]]):
+                peaks_index[-1] = int(cand)
+
+        if first_peak_seed is not None:
+            if not peaks_index:
+                peaks_index = [int(first_peak_seed)]
+            else:
+                first_gap_needed = max(4, int(round(0.35 * float(min_distance_top))))
+                if int(first_peak_seed) < int(peaks_index[0]) and (int(peaks_index[0]) - int(first_peak_seed)) >= first_gap_needed:
+                    peaks_index = [int(first_peak_seed)] + peaks_index
+
+        run_peaks, run_period = _find_best_periodic_peak_run(peaks_index, gap_lo=14, gap_hi=34, min_len=6)
+        median_period = _median_period(run_peaks or peaks_index)
+        period_used = run_period or median_period or dominant_period or 22.0
+        peaks_filled = _fill_missing_seams(run_peaks or peaks_index, period_used)
+        peaks_filled = _extend_periodic_seams(
+            peaks_filled,
+            peaks_index,
+            period_used,
+            profile_norm,
+            y_min=max(0, energy_start_index - int(round(0.6 * float(period_used)))),
+            y_max=int(profile_norm.size - 1),
+        )
+        lo_gap = max(12.0, 0.55 * float(period_used))
+        hi_gap = max(lo_gap + 1.0, 1.55 * float(period_used))
+
+        tube_top_rows_list = []
+        tube_bottom_rows_list = []
+        rejected_tube_gaps = []
+        if peaks_filled:
+            top_gap = float(peaks_filled[0] - energy_start_index)
+            if lo_gap <= top_gap <= hi_gap:
+                tube_top_rows_list.append(int(energy_start_index))
+                tube_bottom_rows_list.append(int(peaks_filled[0]))
+        for prev, curr in zip(peaks_filled[:-1], peaks_filled[1:]):
+            gap = float(curr - prev)
+            if lo_gap <= gap <= hi_gap:
+                tube_top_rows_list.append(int(prev))
+                tube_bottom_rows_list.append(int(curr))
 
     tube_top_rows = np.asarray(tube_top_rows_list, np.int32)
     tube_bottom_rows = np.asarray(tube_bottom_rows_list, np.int32)
@@ -1814,8 +2042,9 @@ def _detect_tubes_in_warp(warp_bgr: np.ndarray) -> tuple[np.ndarray, dict]:
             roi_sobel_abs = np.zeros_like(roi_grad_x, np.float32)
 
         profile_raw = np.max(roi_sobel_abs, axis=0).astype(np.float32)
+        profile_power = 12.0 if cam152_mode else 2.0
         profile_1d = (
-            np.power(_normalize_01(_smooth_1d(profile_raw, 9)), 2.0)
+            np.power(_normalize_01(_smooth_1d(profile_raw, 9)), profile_power)
             if profile_raw.size
             else np.empty((0,), np.float32)
         )
@@ -1874,6 +2103,63 @@ def _detect_tubes_in_warp(warp_bgr: np.ndarray) -> tuple[np.ndarray, dict]:
         probe_rows_list.append(int(hit_y))
 
     probe_rows = np.asarray(probe_rows_list, np.int32)
+
+    if cam152_mode:
+        roi_overlay_vis = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+        cv2.rectangle(roi_overlay_vis, (x_search0, 0), (x_search1 - 1, h - 1), (96, 255, 96), 1)
+        x_start_list: list[dict] = []
+        tube_count_for_numbering = min(len(roi_boxes), len(raw_pick_x_positions), len(probe_rows))
+        for idx, ((y0, y1), x_final, y_probe) in enumerate(zip(roi_boxes, raw_pick_x_positions, probe_rows), start=1):
+            tube_number = max(1, tube_count_for_numbering - idx + 1)
+            y0i = max(0, int(y0))
+            y1i = min(gray.shape[0] - 1, int(y1))
+            x_i = int(round(float(x_final)))
+            y_probe_i = int(round(float(y_probe)))
+            cv2.rectangle(roi_overlay_vis, (x_search0, y0i), (x_search1 - 1, y1i), (0, 220, 255), 1)
+            cv2.line(roi_overlay_vis, (x_search0, y0i), (x_search1 - 1, y0i), (0, 0, 255), 1, cv2.LINE_AA)
+            cv2.line(roi_overlay_vis, (x_i, y1i), (x_i, y_probe_i), (0, 255, 255), 1, cv2.LINE_AA)
+            cv2.circle(roi_overlay_vis, (x_i, y_probe_i), 2, (0, 255, 255), -1, cv2.LINE_AA)
+            cv2.putText(
+                roi_overlay_vis,
+                str(tube_number),
+                (x_search0 + 4, max(12, y0i + 12)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.35,
+                (255, 255, 255),
+                1,
+                cv2.LINE_AA,
+            )
+            x_start_list.append(
+                {
+                    "tube_idx": int(tube_number),
+                    "x_start": float(x_final),
+                    "x_local": float(x_final),
+                    "x_end_estimate": float(x_final),
+                    "x_seed": float(x_final),
+                    "y_center": float(y_probe),
+                    "confidence": 1.0,
+                }
+            )
+
+        x_start_list.sort(key=lambda item: int(item["tube_idx"]))
+
+        return roi_overlay_vis, {
+            "tube_count": int(len(x_start_list)),
+            "dominant_period": float(period_used) if period_used is not None else None,
+            "energy_start_index": int(energy_start_index),
+            "peaks_index": [int(v) for v in peaks_index],
+            "peaks_index_dom": [int(v) for v in peaks_filled],
+            "peaks_index_filtered": [int(v) for v in peaks_filled],
+            "cluster_start_idx": None,
+            "x_start_list": x_start_list,
+            "processing_mode": "cam152",
+            "processing_stage": "cam152_mirrored_warp_roi_sobel_x_no_zoom",
+            "pitch_lo": float(lo_gap),
+            "pitch_hi": float(hi_gap),
+            "rejected_tube_gaps": list(rejected_tube_gaps),
+            "sam2_used": False,
+            "sam2_score": None,
+        }
 
     zoom_blur_kernel = (1, 101)
     zoom_half_width = 30
@@ -1937,8 +2223,9 @@ def _detect_tubes_in_warp(warp_bgr: np.ndarray) -> tuple[np.ndarray, dict]:
             roi_sobel_abs_zoom = np.zeros_like(roi_sobel_abs_zoom, np.float32)
 
         profile_raw = np.max(roi_sobel_abs_zoom, axis=0).astype(np.float32)
+        profile_power = 12.0 if cam152_mode else 2.0
         profile_1d = (
-            np.power(_normalize_01(_smooth_1d(profile_raw, 9)), 2.0)
+            np.power(_normalize_01(_smooth_1d(profile_raw, 9)), profile_power)
             if profile_raw.size
             else np.empty((0,), np.float32)
         )
@@ -1949,8 +2236,7 @@ def _detect_tubes_in_warp(warp_bgr: np.ndarray) -> tuple[np.ndarray, dict]:
             peak_threshold = max(0.16, 0.55 * float(np.max(profile_1d)))
             cand_x = _find_local_peaks_1d(profile_1d, threshold=peak_threshold, min_distance=3)
             if cand_x:
-                cand_arr = np.asarray(cand_x, np.int32)
-                x_local = int(cand_arr[int(np.argmax(profile_1d[cand_arr]))])
+                x_local = int(min(cand_x))
             else:
                 x_local = int(np.argmax(profile_1d))
             conf_val = float(profile_1d[x_local])
@@ -1960,12 +2246,22 @@ def _detect_tubes_in_warp(warp_bgr: np.ndarray) -> tuple[np.ndarray, dict]:
         local_confidences.append(float(conf_val))
         zoom_roi_boxes.append((y0i, y1i, zx0, zx1))
 
-    final_x_positions = list(refine_x_positions)
+    # Cam152 keeps the Sobel-X ROI seed as the final point. The zoom pass is
+    # diagnostic only for that camera because it can pull points too far right.
+    final_x_positions = list(zoom_seed_x_positions if cam152_mode else refine_x_positions)
     final_x_positions = [
         float(min(max(x_val, float(zx0)), float(max(zx0, zx1 - 1))))
         for x_val, (_y0i, _y1i, zx0, zx1) in zip(final_x_positions, zoom_roi_boxes)
     ]
     x_start_list: list[dict] = []
+    tube_count_for_numbering = min(
+        len(zoom_roi_boxes),
+        len(zoom_seed_x_positions),
+        len(refine_x_positions),
+        len(final_x_positions),
+        len(probe_rows),
+        len(local_confidences),
+    )
     for idx, ((y0i, y1i, zx0, zx1), x_seed, x_zoom, x_final, y_probe, conf_val) in enumerate(
         zip(
             zoom_roi_boxes,
@@ -1977,13 +2273,14 @@ def _detect_tubes_in_warp(warp_bgr: np.ndarray) -> tuple[np.ndarray, dict]:
         ),
         start=1,
     ):
+        tube_number = max(1, tube_count_for_numbering - idx + 1)
         cv2.rectangle(warp_vis, (int(zx0), int(y0i)), (int(zx1 - 1), int(y1i)), (0, 220, 255), 1)
         cv2.line(warp_vis, (int(zx0), int(y0i)), (int(zx1 - 1), int(y0i)), (0, 0, 255), 1, cv2.LINE_AA)
         cv2.line(warp_vis, (int(round(x_final)), int(y0i)), (int(round(x_final)), int(y1i)), (0, 0, 255), 1, cv2.LINE_AA)
         cv2.circle(warp_vis, (int(round(x_final)), int(round(y_probe))), 2, (0, 0, 255), -1, cv2.LINE_AA)
         cv2.putText(
             warp_vis,
-            str(idx),
+            str(tube_number),
             (int(zx0) + 4, max(12, int(y0i) + 12)),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.35,
@@ -1993,7 +2290,7 @@ def _detect_tubes_in_warp(warp_bgr: np.ndarray) -> tuple[np.ndarray, dict]:
         )
         x_start_list.append(
             {
-                "tube_idx": int(idx),
+                "tube_idx": int(tube_number),
                 "x_start": float(x_final),
                 "x_local": float(x_zoom),
                 "x_end_estimate": float(x_final),
@@ -2002,6 +2299,8 @@ def _detect_tubes_in_warp(warp_bgr: np.ndarray) -> tuple[np.ndarray, dict]:
                 "confidence": float(conf_val),
             }
         )
+
+    x_start_list.sort(key=lambda item: int(item["tube_idx"]))
 
     for y in peaks_index:
         cv2.line(warp_vis, (0, int(y)), (warp_vis.shape[1] - 1, int(y)), (0, 180, 255), 1, cv2.LINE_AA)
@@ -2025,6 +2324,11 @@ def _detect_tubes_in_warp(warp_bgr: np.ndarray) -> tuple[np.ndarray, dict]:
         "peaks_index_filtered": [int(v) for v in peaks_filled],
         "cluster_start_idx": None,
         "x_start_list": x_start_list,
+        "processing_mode": "cam152" if cam152_mode else "cam151",
+        "processing_stage": "cam151_zoom_refine" if not cam152_mode else "cam152_mirrored_warp_roi_sobel_x_no_zoom",
+        "pitch_lo": float(lo_gap),
+        "pitch_hi": float(hi_gap),
+        "rejected_tube_gaps": list(rejected_tube_gaps),
         "sam2_used": False,
         "sam2_score": None,
     }
@@ -2037,6 +2341,26 @@ def _normalize_roi(roi: dict) -> dict:
         "note": str(roi.get("note") or ""),
         "xyxy": [int(round(float(v))) for v in xyxy[:4]],
     }
+
+
+def _mirror_roi_source_x(roi: dict | None, source_width: int) -> dict | None:
+    if roi is None or source_width <= 0:
+        return roi
+    mirrored = dict(roi)
+    x1, y1, x2, y2 = [int(round(float(v))) for v in roi.get("xyxy", [0, 0, 0, 0])[:4]]
+    mx1 = int(source_width - 1 - x2)
+    mx2 = int(source_width - 1 - x1)
+    mirrored["xyxy"] = [min(mx1, mx2), y1, max(mx1, mx2), y2]
+    return mirrored
+
+
+def _mirror_line_source_x(line: dict, source_width: int) -> dict:
+    if source_width <= 0 or _line_is_warp_space(line):
+        return line
+    mirrored = dict(line)
+    mirrored["x1"] = int(source_width - 1 - int(round(float(line.get("x1", 0)))))
+    mirrored["x2"] = int(source_width - 1 - int(round(float(line.get("x2", 0)))))
+    return mirrored
 
 
 def _pick_detection_roi(rois: list[dict]) -> dict | None:
@@ -2064,6 +2388,8 @@ def _warp_detection_roi(
     src_points: list[tuple[float, float]],
     output_size: tuple[int, int],
     warp_shape: tuple[int, int, int] | tuple[int, int],
+    *,
+    output_flip_horizontal: bool = False,
 ) -> tuple[int, int, int, int] | None:
     if roi is None:
         return None
@@ -2075,6 +2401,15 @@ def _warp_detection_roi(
     src = np.float32(src_points)
     dst = np.float32([[0, 0], [width - 1, 0], [0, height - 1], [width - 1, height - 1]])
     transform = cv2.getPerspectiveTransform(src, dst)
+    if output_flip_horizontal:
+        output_flip = np.float32(
+            [
+                [-1.0, 0.0, float(width - 1)],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ]
+        )
+        transform = output_flip @ transform
 
     x1, y1, x2, y2 = roi["xyxy"]
     roi_pts = np.float32([[[x1, y1]], [[x2, y1]], [[x2, y2]], [[x1, y2]]])
@@ -2110,6 +2445,9 @@ def build_tube_detection_preview(
     src_points_override: list | None = None,
     dst_rect_override: list | tuple | dict | None = None,
 ) -> TubeDetectionPreviewResult:
+    image_path = Path(image_path)
+    cam152_mode = _is_cam152_image(image_path)
+    mirror_in_backend = _needs_backend_mirror(image_path)
     homography = build_homography_preview(
         image_path=image_path,
         lines=lines,
@@ -2117,6 +2455,8 @@ def build_tube_detection_preview(
         output_dir=output_dir,
         src_points_override=src_points_override,
         dst_rect_override=dst_rect_override,
+        flip_horizontal=mirror_in_backend,
+        output_flip_horizontal=mirror_in_backend,
     )
 
     final_transform = cv2.getPerspectiveTransform(
@@ -2130,19 +2470,32 @@ def build_tube_detection_preview(
             ]
         ),
     )
+    if mirror_in_backend:
+        output_flip = np.float32(
+            [
+                [-1.0, 0.0, float(homography.output_size[0] - 1)],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ]
+        )
+        final_transform = output_flip @ final_transform
     final_inverse_transform = np.linalg.inv(final_transform)
 
     warp_bgr = cv2.imread(str(homography.warp_path), cv2.IMREAD_COLOR)
     if warp_bgr is None:
         raise FileNotFoundError(f"Cannot read warp preview: {homography.warp_path}")
 
+    selected_roi = _pick_detection_roi(rois)
+    if mirror_in_backend and homography.source_size[0] > 0:
+        selected_roi = _mirror_roi_source_x(selected_roi, homography.source_size[0])
     detection_roi = _warp_detection_roi(
-        _pick_detection_roi(rois),
+        selected_roi,
         homography.src_points,
         homography.output_size,
         warp_bgr.shape,
+        output_flip_horizontal=mirror_in_backend,
     )
-    if detection_roi is not None:
+    if detection_roi is not None and not cam152_mode:
         stack_band = _estimate_stack_band(warp_bgr, detection_roi[0], detection_roi[2])
         if stack_band is not None:
             band_y0, band_y1, _run, _period = stack_band
@@ -2154,12 +2507,14 @@ def build_tube_detection_preview(
                 int(max(detection_roi[3], band_y1)),
             )
 
+    with open("debug.txt", "a") as _f:
+        _f.write(f"detection_roi={detection_roi} cam152_mode={cam152_mode} warp_shape={warp_bgr.shape}\n")
     if detection_roi is None:
-        overlay_bgr, summary = _detect_tubes_in_warp(warp_bgr)
+        overlay_bgr, summary = _detect_tubes_in_warp(warp_bgr, cam152_mode=cam152_mode)
     else:
         x0, y0, x1, y1 = detection_roi
         warp_crop = warp_bgr[y0:y1, x0:x1]
-        crop_overlay, summary = _detect_tubes_in_warp(warp_crop)
+        crop_overlay, summary = _detect_tubes_in_warp(warp_crop, cam152_mode=cam152_mode)
         overlay_bgr = warp_bgr.copy()
         overlay_bgr[y0:y1, x0:x1] = crop_overlay
         cv2.rectangle(overlay_bgr, (x0 + 2, y0 + 2), (min(x1 - 2, x0 + 220), min(y1 - 2, y0 + 34)), (12, 18, 26), -1)
@@ -2179,6 +2534,16 @@ def build_tube_detection_preview(
         summary["peaks_index_dom"] = [int(v) + y0 for v in summary["peaks_index_dom"]]
         if summary.get("peaks_index_filtered") is not None:
             summary["peaks_index_filtered"] = [int(v) + y0 for v in summary["peaks_index_filtered"]]
+        if summary.get("rejected_tube_gaps") is not None:
+            adjusted_rejected_gaps: list[dict] = []
+            for gap in summary["rejected_tube_gaps"]:
+                gap_item = dict(gap)
+                if gap_item.get("from_y") is not None:
+                    gap_item["from_y"] = int(gap_item["from_y"]) + y0
+                if gap_item.get("to_y") is not None:
+                    gap_item["to_y"] = int(gap_item["to_y"]) + y0
+                adjusted_rejected_gaps.append(gap_item)
+            summary["rejected_tube_gaps"] = adjusted_rejected_gaps
         adjusted_x_starts: list[dict] = []
         for item in summary["x_start_list"]:
             adjusted_item = dict(item)
@@ -2204,8 +2569,18 @@ def build_tube_detection_preview(
             cv2.LINE_AA,
         )
 
-    px_per_in, reference_lines, scale_samples = _compute_reference_measurements(points, final_transform.tolist())
-    reference_source_lines = _compute_reference_source_lines(points)
+    if mirror_in_backend and homography.source_size[0] > 0:
+        src_w = homography.source_size[0]
+        points_for_references = [dict(p, x=int(src_w - 1 - int(p.get("x", 0)))) for p in points]
+        lines_for_references = [_mirror_line_source_x(line, src_w) for line in lines]
+    else:
+        points_for_references = points
+        lines_for_references = lines
+
+    px_per_in, reference_lines, scale_samples = _compute_reference_measurements(
+        points_for_references, final_transform.tolist(), lines=lines_for_references, cam152_mode=cam152_mode
+    )
+    reference_source_lines = _compute_reference_source_lines(points_for_references, cam152_mode=cam152_mode)
     source_overlay_bgr = cv2.imread(str(homography.overlay_path), cv2.IMREAD_COLOR)
     source_overlay_path = Path(output_dir) / "tube_detection_overlay.jpg"
     source_overlay_dirty = False
@@ -2321,6 +2696,8 @@ def build_tube_detection_preview(
             item["ref_distances"] = ref_distances
 
     ref2 = next((ref for ref in reference_lines if str(ref.get("label")) == "ref_02"), None)
+    if ref2 is None and reference_lines:
+        ref2 = reference_lines[-1]  # fallback: usar la ultima referencia disponible (p.ej. ref_01 en cam152)
     if ref2 is not None:
         measure_color = (0, 200, 255)
         for item in summary["x_start_list"]:
@@ -2361,7 +2738,7 @@ def build_tube_detection_preview(
                     cv2.circle(source_overlay_bgr, (int(round(sx1)), int(round(sy1))), 3, src_measure_color, -1, cv2.LINE_AA)
                     source_overlay_dirty = True
 
-            dist_info = dict(item.get("ref_distances", {})).get("ref_02", {})
+            dist_info = dict(item.get("ref_distances", {})).get(str(ref2.get("label", "ref_02")), {})
             if dist_info.get("distance_in") is not None:
                 measure_text = f'{float(dist_info["distance_in"]):.1f}"'
             else:
@@ -2427,4 +2804,9 @@ def build_tube_detection_preview(
         px_per_in=px_per_in,
         reference_lines=reference_lines,
         scale_samples=scale_samples,
+        processing_mode=str(summary.get("processing_mode") or ("cam152" if cam152_mode else "cam151")),
+        processing_stage=str(summary.get("processing_stage") or ("cam152_mirrored_warp_roi_sobel_x_no_zoom" if cam152_mode else "cam151_zoom_refine")),
+        pitch_lo=float(summary["pitch_lo"]) if summary.get("pitch_lo") is not None else None,
+        pitch_hi=float(summary["pitch_hi"]) if summary.get("pitch_hi") is not None else None,
+        rejected_tube_gaps=list(summary.get("rejected_tube_gaps") or []),
     )

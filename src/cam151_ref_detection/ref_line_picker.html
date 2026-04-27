@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ref line picker</title>
+<style>
+*{box-sizing:border-box}body{margin:0;height:100vh;display:grid;grid-template-columns:minmax(0,1fr)320px;grid-template-rows:56px minmax(0,1fr);font-family:Arial,Helvetica,sans-serif;background:#0f1216;color:#edf2f7}header{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;border-bottom:1px solid #2b323a;background:#171b21}h1{margin:0;font-size:17px;letter-spacing:0}.actions{display:flex;gap:8px;flex-wrap:wrap}button{border:1px solid #3a4450;border-radius:6px;background:#222832;color:#f5f7fa;padding:8px 11px;font-size:13px;cursor:pointer}button:hover{background:#2c3440}button.primary{border-color:#1f9d55;background:#1f7a46}button.danger{border-color:#9f3a3a;background:#6b2a2a}button:disabled{opacity:.45;cursor:not-allowed}main{min-width:0;min-height:0;display:grid;grid-template-rows:minmax(0,1fr)34px;background:#0b0d10}#stage{width:100%;height:100%;display:block;background:#0b0d10;touch-action:none;cursor:crosshair}#status{padding:8px 12px;border-top:1px solid #2b323a;background:#171b21;color:#d7dee8;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}aside{min-height:0;overflow:auto;border-left:1px solid #2b323a;background:#151a21;padding:12px}.panel{border:1px solid #2d3540;border-radius:8px;background:#1b2028;padding:10px;margin-bottom:12px}.panel h2{margin:0 0 8px;font-size:13px;text-transform:uppercase;color:#a7b7c8;letter-spacing:0}.coords{font-size:13px;line-height:1.5;color:#d7dee8;overflow-wrap:anywhere}.help{margin:0;color:#b7c2ce;font-size:12px;line-height:1.45}.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle}.top{background:#20e070}.bottom{background:#ff5050}@media(max-width:900px){body{grid-template-columns:1fr;grid-template-rows:auto minmax(65vh,1fr)auto}aside{border-left:0;border-top:1px solid #2b323a;max-height:35vh}header{align-items:flex-start;flex-direction:column}}
+</style>
+</head>
+<body>
+<header><h1>Linea de referencia</h1><div class="actions"><button id="fitBtn">Centrar</button><button id="clearBtn">Limpiar</button><button id="cancelBtn" class="danger">Cancelar</button><button id="confirmBtn" class="primary" disabled>Confirmar</button></div></header>
+<main><canvas id="stage"></canvas><div id="status">Cargando warp...</div></main>
+<aside>
+<section class="panel"><h2>Puntos</h2><div id="coords" class="coords">Sin puntos.</div></section>
+<section class="panel"><h2>Controles</h2><p class="help">Click izquierdo coloca mark_02 y luego mark_03. Arrastra un punto para ajustarlo. Rueda del mouse hace zoom. Shift, click medio o click derecho arrastra la imagen. Enter confirma, Esc cancela.</p></section>
+</aside>
+<script>
+const INITIAL=__INITIAL_STATE__;
+const LABELS=INITIAL.labels||["mark_02","mark_03"],NAMES=INITIAL.names||{};
+const COLORS={mark_02:"#20e070",mark_03:"#ff5050"};
+const stage=document.getElementById("stage"),ctx=stage.getContext("2d"),statusEl=document.getElementById("status"),coordsEl=document.getElementById("coords"),confirmBtn=document.getElementById("confirmBtn");
+const img=new Image();let drag=null,submitted=false;
+const state={pts:{...(INITIAL.existing||{})},nextIdx:0,zoom:1,offsetX:0,offsetY:0,fitted:false};
+function initNext(){for(let i=0;i<LABELS.length;i++){if(!state.pts[LABELS[i]]){state.nextIdx=i;return;}}state.nextIdx=0;}
+initNext();
+function canvasPoint(e){const r=stage.getBoundingClientRect();return{x:e.clientX-r.left,y:e.clientY-r.top};}
+function i2c(p){return{x:p.x*state.zoom+state.offsetX,y:p.y*state.zoom+state.offsetY};}
+function c2i(p){return{x:(p.x-state.offsetX)/state.zoom,y:(p.y-state.offsetY)/state.zoom};}
+function clampPoint(p){return{x:Math.max(0,Math.min(img.naturalWidth,p.x)),y:Math.max(0,Math.min(img.naturalHeight,p.y))};}
+function hasAll(){return LABELS.every(l=>Array.isArray(state.pts[l]));}
+function nextLabel(){return LABELS[state.nextIdx%LABELS.length];}
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+function nearestPoint(cp){let best=null,bd=18;for(const lbl of LABELS){const pt=state.pts[lbl];if(!Array.isArray(pt))continue;const d=dist(cp,i2c({x:pt[0],y:pt[1]}));if(d<bd){bd=d;best=lbl;}}return best;}
+function setStatus(t){statusEl.textContent=t;}
+function fitImage(){if(!img.naturalWidth||!stage.width||!stage.height)return;const s=Math.min(stage.width/img.naturalWidth,stage.height/img.naturalHeight,1);state.zoom=Math.max(.02,s);state.offsetX=(stage.width-img.naturalWidth*state.zoom)/2;state.offsetY=(stage.height-img.naturalHeight*state.zoom)/2;state.fitted=true;draw();}
+function resizeStage(){const r=stage.getBoundingClientRect();stage.width=Math.max(1,Math.round(r.width));stage.height=Math.max(1,Math.round(r.height));state.fitted?draw():fitImage();}
+function placePoint(lbl,p){const q=clampPoint(p);state.pts[lbl]=[q.x,q.y];}
+function drawCross(lbl){
+ const pt=state.pts[lbl];if(!Array.isArray(pt))return;const c=i2c({x:pt[0],y:pt[1]}),col=COLORS[lbl]||"#fff",r=10;
+ ctx.save();ctx.strokeStyle=col;ctx.fillStyle=col;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(c.x-r,c.y);ctx.lineTo(c.x+r,c.y);ctx.moveTo(c.x,c.y-r);ctx.lineTo(c.x,c.y+r);ctx.stroke();ctx.beginPath();ctx.arc(c.x,c.y,4,0,Math.PI*2);ctx.stroke();ctx.font="700 13px Arial,Helvetica,sans-serif";ctx.fillText(lbl,c.x+12,c.y-10);ctx.restore();
+}
+function draw(){
+ ctx.clearRect(0,0,stage.width,stage.height);ctx.fillStyle="#0b0d10";ctx.fillRect(0,0,stage.width,stage.height);
+ if(img.complete&&img.naturalWidth)ctx.drawImage(img,state.offsetX,state.offsetY,img.naturalWidth*state.zoom,img.naturalHeight*state.zoom);
+ if(Array.isArray(state.pts.mark_02)&&Array.isArray(state.pts.mark_03)){const a=i2c({x:state.pts.mark_02[0],y:state.pts.mark_02[1]}),b=i2c({x:state.pts.mark_03[0],y:state.pts.mark_03[1]});ctx.save();ctx.strokeStyle="#00d5ff";ctx.lineWidth=2;ctx.setLineDash([7,4]);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();ctx.restore();}
+ LABELS.forEach(drawCross);
+ confirmBtn.disabled=!hasAll();
+ const lines=LABELS.map(lbl=>{const pt=state.pts[lbl],dot=`<span class="dot ${lbl==="mark_02"?"top":"bottom"}"></span>`;return Array.isArray(pt)?`${dot}${lbl}: x=${pt[0].toFixed(1)}, y=${pt[1].toFixed(1)}`:`${dot}${lbl}: sin definir`;});
+ coordsEl.innerHTML=lines.join("<br>");
+ if(hasAll())setStatus("2/2 puntos listos. Confirma para regresar al notebook.");
+ else setStatus(`Click izquierdo para colocar ${nextLabel()} (${NAMES[nextLabel()]||""}).`);
+}
+stage.addEventListener("pointerdown",e=>{
+ e.preventDefault();stage.setPointerCapture(e.pointerId);const cp=canvasPoint(e);
+ if(e.button===1||e.button===2||e.shiftKey||e.altKey){drag={type:"pan",sx:e.clientX,sy:e.clientY,ox:state.offsetX,oy:state.offsetY};return;}
+ if(e.button!==0)return;
+ const nearest=nearestPoint(cp);
+ if(nearest){drag={type:"point",label:nearest};return;}
+ const lbl=nextLabel();placePoint(lbl,c2i(cp));state.nextIdx=(state.nextIdx+1)%LABELS.length;drag={type:"point",label:lbl};draw();
+});
+stage.addEventListener("pointermove",e=>{
+ if(!drag)return;e.preventDefault();
+ if(drag.type==="pan"){state.offsetX=drag.ox+e.clientX-drag.sx;state.offsetY=drag.oy+e.clientY-drag.sy;draw();return;}
+ if(drag.type==="point"){placePoint(drag.label,c2i(canvasPoint(e)));draw();}
+});
+function stopDrag(e){if(stage.hasPointerCapture(e.pointerId))stage.releasePointerCapture(e.pointerId);drag=null;}
+stage.addEventListener("pointerup",stopDrag);stage.addEventListener("pointercancel",stopDrag);stage.addEventListener("contextmenu",e=>e.preventDefault());
+stage.addEventListener("wheel",e=>{e.preventDefault();const cp=canvasPoint(e),before=c2i(cp),f=e.deltaY<0?1.12:1/1.12;state.zoom=Math.max(.02,Math.min(30,state.zoom*f));state.offsetX=cp.x-before.x*state.zoom;state.offsetY=cp.y-before.y*state.zoom;draw();},{passive:false});
+async function submitResult(confirmed){if(submitted)return;submitted=true;const payload={confirmed,points:hasAll()?state.pts:null};try{await fetch("/result",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});}finally{setStatus(confirmed?"Confirmado. Puedes volver al notebook.":"Cancelado. Puedes volver al notebook.");setTimeout(()=>window.close(),250);}}
+document.getElementById("fitBtn").onclick=fitImage;document.getElementById("clearBtn").onclick=()=>{state.pts={};state.nextIdx=0;draw();};document.getElementById("cancelBtn").onclick=()=>submitResult(false);confirmBtn.onclick=()=>{if(hasAll())submitResult(true);};
+window.addEventListener("keydown",e=>{if(e.key==="Enter"&&hasAll())submitResult(true);if(e.key==="Escape")submitResult(false);if(e.key==="Delete"||e.key==="Backspace"){e.preventDefault();const prev=(state.nextIdx-1+LABELS.length)%LABELS.length;delete state.pts[LABELS[prev]];state.nextIdx=prev;draw();}});
+window.addEventListener("resize",resizeStage);window.addEventListener("beforeunload",()=>{if(!submitted)navigator.sendBeacon("/result",JSON.stringify({confirmed:false}));});
+img.onload=()=>{resizeStage();};img.onerror=()=>setStatus("No se pudo cargar el warp.");img.src="/image";
+</script>
+</body>
+</html>

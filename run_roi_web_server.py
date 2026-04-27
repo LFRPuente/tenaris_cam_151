@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -14,6 +15,16 @@ ROOT = Path(__file__).resolve().parent
 TEST_IMAGES_DIR = ROOT / "test_images"
 MANUAL_ROIS_DIR = ROOT / "manual_rois"
 PREVIEW_DIR = ROOT / "artifacts" / "web_homography_preview"
+
+
+def _is_cam152_image(image_path: str | Path) -> bool:
+    stem = Path(image_path).stem.lower()
+    return stem in {"cam_152", "cam152"} or stem.startswith("cam_152_") or stem.startswith("cam152_")
+
+
+def _needs_backend_mirror(image_path: str | Path) -> bool:
+    stem = Path(image_path).stem.lower()
+    return stem in {"cam_152", "cam152"} or stem.startswith("cam_152_") or stem.startswith("cam152_")
 
 
 class RoiWebHandler(SimpleHTTPRequestHandler):
@@ -40,12 +51,15 @@ class RoiWebHandler(SimpleHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         if parsed.path == "/api/images":
+            image_paths = []
+            for pattern in ("cam151_wide_*.jpg", "*.jpeg", "*.jpg", "*.png"):
+                image_paths.extend(TEST_IMAGES_DIR.glob(pattern))
             images = [
                 {
                     "name": path.name,
                     "url": f"/test_images/{path.name}",
                 }
-                for path in sorted(TEST_IMAGES_DIR.glob("cam151_wide_*.jpg"))
+                for path in sorted(set(image_paths), key=lambda item: item.name.lower())
             ]
             self._json_response({"images": images})
             return
@@ -135,6 +149,8 @@ class RoiWebHandler(SimpleHTTPRequestHandler):
                 warp_padding=warp_padding,
                 src_points_override=src_points_override,
                 dst_rect_override=dst_rect_override,
+                flip_horizontal=_needs_backend_mirror(image_path),
+                output_flip_horizontal=_needs_backend_mirror(image_path),
             )
         except Exception as exc:
             self._json_response({"error": str(exc)}, status=400)
@@ -156,10 +172,14 @@ class RoiWebHandler(SimpleHTTPRequestHandler):
         )
 
     def _handle_tube_detection_preview(self) -> None:
+        with open("debug.txt", "a") as _f:
+            _f.write("_handle_tube_detection_preview called\n")
         try:
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
             image_name = str(payload["image_name"])
+            with open("debug.txt", "a") as _f:
+                _f.write(f"image_name={image_name}\n")
             rois = list(payload.get("rois", []))
             points = list(payload.get("points", []))
             lines = list(payload.get("lines", []))
@@ -212,13 +232,18 @@ class RoiWebHandler(SimpleHTTPRequestHandler):
                 "px_per_in": result.px_per_in,
                 "reference_lines": result.reference_lines,
                 "scale_samples": result.scale_samples,
+                "processing_mode": result.processing_mode,
+                "processing_stage": result.processing_stage,
+                "pitch_lo": result.pitch_lo,
+                "pitch_hi": result.pitch_hi,
+                "rejected_tube_gaps": result.rejected_tube_gaps,
             }
         )
 
 
 def main() -> None:
     host = "127.0.0.1"
-    port = 8765
+    port = int(os.environ.get("ROI_WEB_PORT", "8765"))
     server = ThreadingHTTPServer((host, port), RoiWebHandler)
     print(f"ROI web app running at http://{host}:{port}/web_roi_picker/")
     print(f"Serving project root: {ROOT}")

@@ -1,0 +1,925 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Medicion manual de tubos</title>
+<style>
+*{box-sizing:border-box}body{margin:0;min-height:100vh;font-family:Arial,Helvetica,sans-serif;background:#0f1318;color:#e8eef5}header{padding:14px 18px;border-bottom:1px solid #27303a;background:#171d25;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}h1{margin:0;font-size:20px}.sub{font-size:13px;color:#aab7c6;line-height:1.45}.toolbar{display:flex;gap:8px;flex-wrap:wrap}button{border:1px solid #334050;border-radius:6px;background:#222c38;color:#f4f7fb;padding:8px 12px;font-size:13px;cursor:pointer}button:hover{background:#2c3847}button.primary{background:#1f6c46;border-color:#2a8b5b}button.danger{background:#6d2a2a;border-color:#924141}button.toggle.active{background:#155f86;border-color:#7ed7ff;color:#fff}button:disabled{opacity:.52;cursor:default}.page{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;padding:12px}.summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.metric{border:1px solid #2d3947;border-radius:8px;background:#202935;padding:10px}.metric .label{font-size:11px;color:#9cb0c3;text-transform:uppercase}.metric .value{margin-top:4px;font-size:22px;font-weight:700}.panel{border:1px solid #27303a;border-radius:8px;background:#161c24;overflow:hidden}.panel-header{padding:12px 14px;border-bottom:1px solid #27303a;background:#1b222c}.panel-header h2{margin:0;font-size:14px;color:#f6f8fb}.panel-header p{margin:4px 0 0;font-size:12px;color:#a8b5c3;line-height:1.45}.viewer-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:12px}.viewer-card{border:1px solid #2a3440;border-radius:8px;background:#131a21;display:flex;flex-direction:column;overflow:hidden}.viewer-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid #26313d;background:#18202a}.viewer-head h3{margin:0;font-size:13px;color:#eef4fb}.viewer-head .mini{display:block;margin-top:3px;max-width:100%;line-height:1.35}.viewer-toolbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.viewer-toolbar button{padding:6px 10px;font-size:12px}.viewer-scroll{overflow:auto;max-height:720px;background:#0e141b;cursor:grab}.viewer-scroll.panning{cursor:grabbing}.viewer-stage{position:relative;transform-origin:top left}.viewer-image{display:block;max-width:none;height:auto;user-select:none;-webkit-user-drag:none}.viewer-overlay{position:absolute;left:0;top:0;display:block;width:100%;height:auto;background:transparent;user-select:none}.viewer-empty{padding:18px;border-top:1px solid #26313d;color:#9fb1c4;text-align:center;background:#131a21}.table-wrap{padding:12px;overflow:auto}.measure-table{width:100%;border-collapse:collapse;font-size:12px}.measure-table th,.measure-table td{border-bottom:1px solid #27303a;padding:7px 6px;text-align:left;vertical-align:top}.measure-table th{position:sticky;top:0;background:#171d25;color:#c8d3df;font-size:11px;text-transform:uppercase}.measure-row.selected td{background:rgba(38,61,88,.34)}.hint{padding:0 12px 12px;font-size:12px;color:#a7b4c2;line-height:1.45}.empty{padding:18px;border:1px dashed #344252;border-radius:8px;color:#9fb1c4;text-align:center}.viewer-ref-band{fill:#0d6ea8}.viewer-ref-line{stroke:#91e0ff;stroke-width:3.8}.viewer-ref-cap{stroke:#ffffff;stroke-width:2.6}.viewer-ref-chip{fill:#e8f6ff;stroke:#2c6c93;stroke-width:1.1}.viewer-ref-text{fill:#113753;font-size:11px;font-weight:700}.viewer-point{fill:#ffe48c;stroke:#132535;stroke-width:1.5}.viewer-point.selected{fill:#74d0ff;stroke:#ffffff;stroke-width:2.2}.viewer-point.pending{fill:#ffb45c;stroke:#ffffff;stroke-width:2}.viewer-hit{fill:transparent;cursor:pointer}.viewer-number{fill:#eef6ff;font-size:11px;font-weight:700}.viewer-measure-line{stroke:#f6b24b;stroke-width:2.2}.viewer-measure-cap{stroke:#f6b24b;stroke-width:2}.viewer-measure-chip{fill:#eef5fb;stroke:#2e5879;stroke-width:1.1}.viewer-measure-text{fill:#163b59;font-size:11px;font-weight:700}.viewer-label-box{fill:#123252;stroke:#d5e8fb;stroke-width:1.5}.viewer-label-box.pending{fill:#61411a;stroke:#f0d79a}.viewer-title{fill:#f7fbff;font-size:13px;font-weight:700}.viewer-sub{fill:#d4e6f8;font-size:11px;font-weight:600}.viewer-scale-line{stroke:#7ed7ff;stroke-width:3;opacity:.92}.viewer-scale-cap{stroke:#effaff;stroke-width:2}.viewer-scale-dot{fill:#13324b;stroke:#9be4ff;stroke-width:1.5}.viewer-scale-chip{fill:#eff9ff;stroke:#2d6488;stroke-width:1.1}.viewer-scale-text{fill:#153950;font-size:10px;font-weight:700}.viewer-scale-sub{fill:#416781;font-size:9px;font-weight:600}.viewer-final-chip{fill:#f8fbdf;stroke:#7c7a26;stroke-width:1.1}.viewer-final-text{fill:#4c4b14;font-size:10px;font-weight:700}.viewer-ruler-line{stroke:#ff6f91;stroke-width:2.4;stroke-dasharray:8 4}.viewer-ruler-cap{stroke:#ffd8e1;stroke-width:2}.viewer-ruler-point{fill:#ff9eb3;stroke:#fff;stroke-width:1.8}.viewer-ruler-chip{fill:#fff0f4;stroke:#a44b66;stroke-width:1.2}.viewer-ruler-text{fill:#66263c;font-size:10px;font-weight:700}.viewer-ruler-sub{fill:#924d67;font-size:9px;font-weight:600}.status-good{color:#8fdaaa}.status-warn{color:#f1c37b}.status-bad{color:#ff9696}.tight{white-space:nowrap}@media(max-width:1200px){.viewer-grid{grid-template-columns:1fr}.summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Medicion manual de tubos</h1>
+    <div class="sub" id="headerSub">Cargando...</div>
+  </div>
+  <div class="toolbar">
+    <button id="addTubeBtn" class="primary">Anadir tubo</button>
+    <button id="deleteTubeBtn">Eliminar tubo seleccionado</button>
+    <button id="cancelBtn" class="danger">Cancelar</button>
+    <button id="confirmBtn" class="primary">Confirmar y exportar</button>
+  </div>
+</header>
+
+<div class="page">
+  <div class="summary-grid">
+    <div class="metric"><div class="label">Tubo actual</div><div class="value" id="metricTube">-</div></div>
+    <div class="metric"><div class="label">Total manual</div><div class="value" id="metricManual">-</div></div>
+    <div class="metric"><div class="label">Total algoritmo</div><div class="value" id="metricAlgo">-</div></div>
+    <div class="metric"><div class="label">Delta</div><div class="value" id="metricDelta">-</div></div>
+  </div>
+
+  <section class="panel">
+    <div class="panel-header">
+      <h2>ROI warp limpias</h2>
+      <p id="workflowText">Anadir tubo, click en 151, luego click en 152. La tabla compara lo manual contra el algoritmo por numero de tubo.</p>
+    </div>
+    <div class="viewer-grid">
+      <section class="viewer-card">
+        <div class="viewer-head">
+          <div>
+            <h3 id="viewer151Title">Cam151 ROI warp</h3>
+            <span id="viewer151Meta" class="mini"></span>
+          </div>
+          <div class="viewer-toolbar">
+            <button id="viewer151ZoomOut" type="button">-</button>
+            <button id="viewer151ZoomReset" type="button">100%</button>
+            <button id="viewer151ZoomIn" type="button">+</button>
+            <button id="viewer151RulerFree" type="button" class="toggle">Regla</button>
+            <button id="viewer151RulerH" type="button" class="toggle">H</button>
+            <button id="viewer151RulerV" type="button" class="toggle">V</button>
+            <button id="viewer151RulerClear" type="button">Limpiar</button>
+          </div>
+        </div>
+        <div id="viewer151Scroll" class="viewer-scroll">
+          <div id="viewer151Stage" class="viewer-stage">
+            <img id="viewer151Img" class="viewer-image" alt="Cam151 ROI">
+            <svg id="viewer151Overlay" class="viewer-overlay"></svg>
+          </div>
+        </div>
+        <div id="viewer151Empty" class="viewer-empty" hidden>No se pudo cargar la ROI de 151.</div>
+      </section>
+
+      <section class="viewer-card">
+        <div class="viewer-head">
+          <div>
+            <h3 id="viewer152Title">Cam152 ROI warp</h3>
+            <span id="viewer152Meta" class="mini"></span>
+          </div>
+          <div class="viewer-toolbar">
+            <button id="viewer152ZoomOut" type="button">-</button>
+            <button id="viewer152ZoomReset" type="button">100%</button>
+            <button id="viewer152ZoomIn" type="button">+</button>
+            <button id="viewer152RulerFree" type="button" class="toggle">Regla</button>
+            <button id="viewer152RulerH" type="button" class="toggle">H</button>
+            <button id="viewer152RulerV" type="button" class="toggle">V</button>
+            <button id="viewer152RulerClear" type="button">Limpiar</button>
+          </div>
+        </div>
+        <div id="viewer152Scroll" class="viewer-scroll">
+          <div id="viewer152Stage" class="viewer-stage">
+            <img id="viewer152Img" class="viewer-image" alt="Cam152 ROI">
+            <svg id="viewer152Overlay" class="viewer-overlay"></svg>
+          </div>
+        </div>
+        <div id="viewer152Empty" class="viewer-empty" hidden>No se pudo cargar la ROI de 152.</div>
+      </section>
+    </div>
+    <div class="hint">
+      <div>Reglas: r151 = medicion_151 - 47.75 | r152 = 41 - medicion si queda antes, o 41 + medicion si queda despues.</div>
+      <div>Longitud total = 408.5 + r151 + r152. La numeracion se lleva de abajo hacia arriba, en el orden en que vayas anadiendo tubos.</div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-header">
+      <h2>Comparacion manual vs algoritmo</h2>
+      <p>Haz click en una fila para seleccionarla y ajustar alguno de sus puntos directamente sobre la imagen.</p>
+    </div>
+    <div class="table-wrap">
+      <table class="measure-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>M151</th>
+            <th>Alg151</th>
+            <th>D151</th>
+            <th>M152</th>
+            <th>Pos152</th>
+            <th>Alg152</th>
+            <th>D152</th>
+            <th>Total M</th>
+            <th>Total Alg</th>
+            <th>Delta</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+      <div id="tableEmpty" class="empty">Todavia no hay tubos manuales.</div>
+    </div>
+  </section>
+</div>
+
+<script>
+const INITIAL = __INITIAL_STATE__;
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+const state = {
+  rows: [],
+  draft: null,
+  selectedTube: null,
+  zoom: {"151": 1, "152": 1},
+  ruler: {
+    "151": {mode: "none", p1: null, p2: null},
+    "152": {mode: "none", p1: null, p2: null},
+  },
+  submitted: false,
+  pan: null,
+};
+
+const els = {
+  headerSub: document.getElementById("headerSub"),
+  workflowText: document.getElementById("workflowText"),
+  metricTube: document.getElementById("metricTube"),
+  metricManual: document.getElementById("metricManual"),
+  metricAlgo: document.getElementById("metricAlgo"),
+  metricDelta: document.getElementById("metricDelta"),
+  addTubeBtn: document.getElementById("addTubeBtn"),
+  deleteTubeBtn: document.getElementById("deleteTubeBtn"),
+  cancelBtn: document.getElementById("cancelBtn"),
+  confirmBtn: document.getElementById("confirmBtn"),
+  tableBody: document.getElementById("tableBody"),
+  tableEmpty: document.getElementById("tableEmpty"),
+  viewers: {
+    "151": {
+      title: document.getElementById("viewer151Title"),
+      meta: document.getElementById("viewer151Meta"),
+      scroll: document.getElementById("viewer151Scroll"),
+      stage: document.getElementById("viewer151Stage"),
+      img: document.getElementById("viewer151Img"),
+      overlay: document.getElementById("viewer151Overlay"),
+      empty: document.getElementById("viewer151Empty"),
+      zoomIn: document.getElementById("viewer151ZoomIn"),
+      zoomOut: document.getElementById("viewer151ZoomOut"),
+      zoomReset: document.getElementById("viewer151ZoomReset"),
+      rulerFree: document.getElementById("viewer151RulerFree"),
+      rulerH: document.getElementById("viewer151RulerH"),
+      rulerV: document.getElementById("viewer151RulerV"),
+      rulerClear: document.getElementById("viewer151RulerClear"),
+    },
+    "152": {
+      title: document.getElementById("viewer152Title"),
+      meta: document.getElementById("viewer152Meta"),
+      scroll: document.getElementById("viewer152Scroll"),
+      stage: document.getElementById("viewer152Stage"),
+      img: document.getElementById("viewer152Img"),
+      overlay: document.getElementById("viewer152Overlay"),
+      empty: document.getElementById("viewer152Empty"),
+      zoomIn: document.getElementById("viewer152ZoomIn"),
+      zoomOut: document.getElementById("viewer152ZoomOut"),
+      zoomReset: document.getElementById("viewer152ZoomReset"),
+      rulerFree: document.getElementById("viewer152RulerFree"),
+      rulerH: document.getElementById("viewer152RulerH"),
+      rulerV: document.getElementById("viewer152RulerV"),
+      rulerClear: document.getElementById("viewer152RulerClear"),
+    },
+  },
+};
+
+function clamp(value, minValue, maxValue){
+  return Math.max(minValue, Math.min(maxValue, value));
+}
+
+function fmt(value, digits=2, suffix=""){
+  if(value === null || value === undefined || Number.isNaN(Number(value))) return "-";
+  return `${Number(value).toFixed(digits)}${suffix}`;
+}
+
+function escapeHtml(value){
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;");
+}
+
+function sideState(sideKey){
+  return (INITIAL.sides || {})[String(sideKey)] || {};
+}
+
+function imageState(sideKey){
+  return (INITIAL.images || {})[String(sideKey)] || {};
+}
+
+function scaleSamplesForSide(sideKey){
+  const samples = sideState(sideKey).scale_samples;
+  return Array.isArray(samples) ? samples : [];
+}
+
+function rulerState(sideKey){
+  return state.ruler[String(sideKey)] || {mode: "none", p1: null, p2: null};
+}
+
+function rulerModeLabel(mode){
+  if(mode === "horizontal") return "Horizontal";
+  if(mode === "vertical") return "Vertical";
+  return "Libre";
+}
+
+function selectedRow(){
+  return state.rows.find((row) => row.tube_number === state.selectedTube) || null;
+}
+
+function algorithmEntry(sideKey, tubeNumber){
+  const byTube = sideState(sideKey).algorithm_by_tube || {};
+  return byTube[String(tubeNumber)] || null;
+}
+
+function refLineAtY(sideKey, yValue){
+  const side = sideState(sideKey);
+  const line = side.ref_line || null;
+  if(line && line.mark_02 && line.mark_03){
+    const x0 = Number(line.mark_02[0]);
+    const y0 = Number(line.mark_02[1]);
+    const x1 = Number(line.mark_03[0]);
+    const y1 = Number(line.mark_03[1]);
+    if(Number.isFinite(x0) && Number.isFinite(y0) && Number.isFinite(x1) && Number.isFinite(y1)){
+      if(Math.abs(y1 - y0) <= 1e-6){
+        return 0.5 * (x0 + x1);
+      }
+      const t = (Number(yValue) - y0) / (y1 - y0);
+      return x0 + t * (x1 - x0);
+    }
+  }
+  const refX = Number(side.ref_x);
+  return Number.isFinite(refX) ? refX : null;
+}
+
+function manualMeasure(sideKey, point){
+  if(!point) return null;
+  const side = sideState(sideKey);
+  const refX = refLineAtY(sideKey, point.y);
+  const pxPerIn = Number(side.px_per_in);
+  if(!Number.isFinite(refX) || !Number.isFinite(pxPerIn) || pxPerIn <= 0){
+    return null;
+  }
+  return Math.abs(Number(point.x) - refX) / pxPerIn;
+}
+
+function manualPosition152(point){
+  if(!point) return null;
+  const refX = refLineAtY("152", point.y);
+  if(!Number.isFinite(refX)) return null;
+  return Number(point.x) < refX ? "before" : "after";
+}
+
+function manualR151(row){
+  const measure = manualMeasure("151", row?.point151);
+  if(measure === null) return null;
+  return measure - Number(INITIAL.config.left_reference_in);
+}
+
+function manualR152(row){
+  const measure = manualMeasure("152", row?.point152);
+  const position = manualPosition152(row?.point152);
+  if(measure === null || !position) return null;
+  return position === "before"
+    ? Number(INITIAL.config.right_reference_in) - measure
+    : Number(INITIAL.config.right_reference_in) + measure;
+}
+
+function manualTotal(row){
+  const leftValue = manualR151(row);
+  const rightValue = manualR152(row);
+  if(leftValue === null || rightValue === null) return null;
+  return Number(INITIAL.config.base_central_in) + leftValue + rightValue;
+}
+
+function algorithmTotal(tubeNumber){
+  const leftEntry = algorithmEntry("151", tubeNumber);
+  const rightEntry = algorithmEntry("152", tubeNumber);
+  if(!leftEntry || !rightEntry) return null;
+  if(leftEntry.r_value === null || rightEntry.r_value === null || leftEntry.r_value === undefined || rightEntry.r_value === undefined){
+    return null;
+  }
+  return Number(INITIAL.config.base_central_in) + Number(leftEntry.r_value) + Number(rightEntry.r_value);
+}
+
+function nextTubeNumber(){
+  return state.rows.length + 1;
+}
+
+function clearRuler(sideKey){
+  const ruler = rulerState(sideKey);
+  ruler.mode = "none";
+  ruler.p1 = null;
+  ruler.p2 = null;
+  renderAll();
+}
+
+function setRulerMode(sideKey, mode){
+  const ruler = rulerState(sideKey);
+  if(ruler.mode === mode){
+    ruler.mode = "none";
+    ruler.p1 = null;
+    ruler.p2 = null;
+  }else{
+    ruler.mode = mode;
+    ruler.p1 = null;
+    ruler.p2 = null;
+  }
+  renderAll();
+}
+
+function constrainRulerPoint(mode, anchor, point){
+  if(!anchor) return point;
+  if(mode === "horizontal"){
+    return {x: point.x, y: anchor.y};
+  }
+  if(mode === "vertical"){
+    return {x: anchor.x, y: point.y};
+  }
+  return point;
+}
+
+function rulerDistancePx(sideKey){
+  const ruler = rulerState(sideKey);
+  if(!ruler.p1 || !ruler.p2) return null;
+  const dx = Math.abs(Number(ruler.p2.x) - Number(ruler.p1.x));
+  const dy = Math.abs(Number(ruler.p2.y) - Number(ruler.p1.y));
+  if(ruler.mode === "horizontal") return dx;
+  if(ruler.mode === "vertical") return dy;
+  return Math.hypot(dx, dy);
+}
+
+function rulerDistanceIn(sideKey){
+  const distancePx = rulerDistancePx(sideKey);
+  const pxPerIn = Number(sideState(sideKey).px_per_in);
+  if(distancePx === null || !Number.isFinite(pxPerIn) || pxPerIn <= 0) return null;
+  return distancePx / pxPerIn;
+}
+
+function handleRulerClick(sideKey, point){
+  const ruler = rulerState(sideKey);
+  if(ruler.mode === "none") return false;
+  if(!ruler.p1 || (ruler.p1 && ruler.p2)){
+    ruler.p1 = point;
+    ruler.p2 = null;
+  }else{
+    ruler.p2 = constrainRulerPoint(ruler.mode, ruler.p1, point);
+  }
+  renderAll();
+  return true;
+}
+
+function renumberRows(){
+  state.rows.forEach((row, index) => {
+    row.tube_number = index + 1;
+  });
+}
+
+function startAddTube(){
+  if(state.draft) return;
+  state.draft = {
+    tube_number: nextTubeNumber(),
+    point151: null,
+    point152: null,
+  };
+  state.selectedTube = state.draft.tube_number;
+  renderAll();
+}
+
+function deleteSelectedTube(){
+  if(state.selectedTube === null) return;
+  if(state.draft && state.draft.tube_number === state.selectedTube){
+    state.draft = null;
+    state.selectedTube = state.rows.length ? state.rows[state.rows.length - 1].tube_number : null;
+    renderAll();
+    return;
+  }
+  const index = state.rows.findIndex((row) => row.tube_number === state.selectedTube);
+  if(index < 0) return;
+  state.rows.splice(index, 1);
+  renumberRows();
+  if(state.draft){
+    state.draft.tube_number = nextTubeNumber();
+  }
+  state.selectedTube = state.rows.length ? state.rows[Math.max(0, index - 1)].tube_number : null;
+  renderAll();
+}
+
+function workflowText(){
+  for(const sideKey of ["151", "152"]){
+    const ruler = rulerState(sideKey);
+    if(ruler.mode !== "none"){
+      return `Regla ${rulerModeLabel(ruler.mode).toLowerCase()} activa en cam${sideKey}. Click una vez para el inicio y otra para el fin.`;
+    }
+  }
+  if(state.draft){
+    if(!state.draft.point151){
+      return `Nuevo tubo ${state.draft.tube_number}: click en cam151.`;
+    }
+    if(!state.draft.point152){
+      return `Tubo ${state.draft.tube_number}: ahora click en cam152.`;
+    }
+  }
+  if(state.selectedTube !== null){
+    return `Tubo ${state.selectedTube} seleccionado. Puedes ajustar sus puntos con click directo en 151 o 152.`;
+  }
+  return "Anadir tubo, click en 151, luego click en 152. La tabla compara lo manual contra el algoritmo por numero de tubo.";
+}
+
+function imagePointFromEvent(sideKey, event){
+  const viewer = els.viewers[String(sideKey)];
+  const meta = imageState(sideKey);
+  if(!viewer || !meta.available) return null;
+  const rect = viewer.overlay.getBoundingClientRect();
+  if(rect.width <= 0 || rect.height <= 0) return null;
+  const x = ((event.clientX - rect.left) / rect.width) * Number(meta.width);
+  const y = ((event.clientY - rect.top) / rect.height) * Number(meta.height);
+  return {
+    x: clamp(x, 0, Number(meta.width)),
+    y: clamp(y, 0, Number(meta.height)),
+  };
+}
+
+function handleViewerClick(sideKey, event){
+  const point = imagePointFromEvent(sideKey, event);
+  if(!point) return;
+  if(handleRulerClick(sideKey, point)) return;
+
+  if(state.draft){
+    if(String(sideKey) === "151"){
+      state.draft.point151 = point;
+      renderAll();
+      return;
+    }
+    if(String(sideKey) === "152" && !state.draft.point151){
+      els.headerSub.textContent = "Primero marca el punto en cam151.";
+      return;
+    }
+    if(String(sideKey) === "152"){
+      state.draft.point152 = point;
+      state.rows.push(state.draft);
+      state.selectedTube = state.draft.tube_number;
+      state.draft = null;
+      renderAll();
+      return;
+    }
+  }
+
+  const row = selectedRow();
+  if(!row){
+    if(String(sideKey) === "151"){
+      startAddTube();
+      state.draft.point151 = point;
+      renderAll();
+    } else {
+      els.headerSub.textContent = "Usa Anadir tubo y empieza por cam151.";
+    }
+    return;
+  }
+
+  if(String(sideKey) === "151"){
+    row.point151 = point;
+  } else {
+    row.point152 = point;
+  }
+  renderAll();
+}
+
+function renderMetrics(){
+  const row = state.draft || selectedRow();
+  const tubeNumber = row ? row.tube_number : null;
+  const manualTotalValue = row ? manualTotal(row) : null;
+  const algoTotalValue = tubeNumber !== null ? algorithmTotal(tubeNumber) : null;
+  const deltaValue = manualTotalValue !== null && algoTotalValue !== null ? manualTotalValue - algoTotalValue : null;
+  els.metricTube.textContent = tubeNumber === null ? "-" : String(tubeNumber);
+  els.metricManual.textContent = manualTotalValue === null ? "-" : `${manualTotalValue.toFixed(2)} in`;
+  els.metricAlgo.textContent = algoTotalValue === null ? "-" : `${algoTotalValue.toFixed(2)} in`;
+  els.metricDelta.textContent = deltaValue === null ? "-" : `${deltaValue.toFixed(2)} in`;
+  els.metricDelta.className = "value";
+  if(deltaValue !== null){
+    const absDelta = Math.abs(deltaValue);
+    if(absDelta <= 1.0) els.metricDelta.classList.add("status-good");
+    else if(absDelta <= 3.0) els.metricDelta.classList.add("status-warn");
+    else els.metricDelta.classList.add("status-bad");
+  }
+}
+
+function renderTable(){
+  els.tableBody.innerHTML = "";
+  els.tableEmpty.hidden = state.rows.length > 0;
+  state.rows.forEach((row) => {
+    const tubeNumber = row.tube_number;
+    const alg151 = algorithmEntry("151", tubeNumber);
+    const alg152 = algorithmEntry("152", tubeNumber);
+    const m151 = manualMeasure("151", row.point151);
+    const m152 = manualMeasure("152", row.point152);
+    const totalM = manualTotal(row);
+    const totalA = algorithmTotal(tubeNumber);
+    const delta151 = m151 !== null && alg151 && alg151.distance_in !== null ? m151 - Number(alg151.distance_in) : null;
+    const delta152 = m152 !== null && alg152 && alg152.distance_in !== null ? m152 - Number(alg152.distance_in) : null;
+    const deltaT = totalM !== null && totalA !== null ? totalM - totalA : null;
+
+    const tr = document.createElement("tr");
+    tr.className = "measure-row";
+    if(state.selectedTube === tubeNumber) tr.classList.add("selected");
+    tr.innerHTML = `
+      <td class="tight">${tubeNumber}</td>
+      <td>${fmt(m151, 3)}</td>
+      <td>${fmt(alg151 ? alg151.distance_in : null, 3)}</td>
+      <td>${fmt(delta151, 3)}</td>
+      <td>${fmt(m152, 3)}</td>
+      <td>${row.point152 ? (manualPosition152(row.point152) === "before" ? "Antes" : "Despues") : "-"}</td>
+      <td>${fmt(alg152 ? alg152.distance_in : null, 3)}</td>
+      <td>${fmt(delta152, 3)}</td>
+      <td>${fmt(totalM, 3)}</td>
+      <td>${fmt(totalA, 3)}</td>
+      <td>${fmt(deltaT, 3)}</td>
+    `;
+    tr.addEventListener("click", () => {
+      state.selectedTube = tubeNumber;
+      renderAll();
+    });
+    els.tableBody.appendChild(tr);
+  });
+}
+
+function renderViewer(sideKey){
+  const viewer = els.viewers[String(sideKey)];
+  const side = sideState(sideKey);
+  const meta = imageState(sideKey);
+  const zoom = state.zoom[String(sideKey)] || 1;
+  const scales = scaleSamplesForSide(sideKey);
+  const ruler = rulerState(sideKey);
+  const selected = state.draft && state.selectedTube === state.draft.tube_number ? state.draft : selectedRow();
+  const refX = Number(side.ref_x);
+  const refLine = side.ref_line || null;
+  const pxPerIn = Number(side.px_per_in);
+
+  viewer.title.textContent = `Cam${sideKey} ROI warp`;
+  const scaleSummary = scales.length
+    ? scales.map((sample) => `${escapeHtml(String(sample.label))}: ${fmt(sample.px_per_in, 3)} px/in`).join(" | ")
+    : "Sin wscale exportadas";
+  viewer.meta.innerHTML = `Ref = ${fmt(side.reference_in, 2)} in | final = ${fmt(side.px_per_in, 4)} px/in<br>Escalas: ${scaleSummary}`;
+  viewer.zoomReset.textContent = `${Math.round(zoom * 100)}%`;
+  viewer.rulerFree.classList.toggle("active", ruler.mode === "free");
+  viewer.rulerH.classList.toggle("active", ruler.mode === "horizontal");
+  viewer.rulerV.classList.toggle("active", ruler.mode === "vertical");
+
+  const available = Boolean(meta.available && meta.url && meta.width && meta.height);
+  [viewer.zoomIn, viewer.zoomOut, viewer.zoomReset, viewer.rulerFree, viewer.rulerH, viewer.rulerV, viewer.rulerClear].forEach((button) => {
+    button.disabled = !available;
+  });
+  if(available){
+    viewer.rulerClear.disabled = !ruler.p1 && !ruler.p2 && ruler.mode === "none";
+  }
+
+  if(!available){
+    viewer.scroll.hidden = true;
+    viewer.empty.hidden = false;
+    viewer.overlay.innerHTML = "";
+    viewer.img.removeAttribute("src");
+    return;
+  }
+
+  viewer.scroll.hidden = false;
+  viewer.empty.hidden = true;
+  if(viewer.img.getAttribute("src") !== meta.url){
+    viewer.img.setAttribute("src", meta.url);
+  }
+
+  const scaledWidth = Math.round(Number(meta.width) * zoom);
+  const scaledHeight = Math.round(Number(meta.height) * zoom);
+  viewer.stage.style.width = `${scaledWidth}px`;
+  viewer.stage.style.height = `${scaledHeight}px`;
+  viewer.img.width = scaledWidth;
+  viewer.img.height = scaledHeight;
+  viewer.overlay.setAttribute("viewBox", `0 0 ${meta.width} ${meta.height}`);
+  viewer.overlay.setAttribute("width", String(scaledWidth));
+  viewer.overlay.setAttribute("height", String(scaledHeight));
+  viewer.overlay.style.width = `${scaledWidth}px`;
+  viewer.overlay.style.height = `${scaledHeight}px`;
+  viewer.overlay.innerHTML = "";
+
+  const svg = viewer.overlay;
+  const add = (tag, attrs, text="") => {
+    const node = document.createElementNS(SVG_NS, tag);
+    Object.entries(attrs || {}).forEach(([key, value]) => node.setAttribute(key, String(value)));
+    if(text) node.textContent = text;
+    svg.appendChild(node);
+    return node;
+  };
+
+  scales.forEach((sample, index) => {
+    if(!Array.isArray(sample.p1) || !Array.isArray(sample.p2)) return;
+    const x0 = Number(sample.p1[0]);
+    const y0 = Number(sample.p1[1]);
+    const x1 = Number(sample.p2[0]);
+    const y1 = Number(sample.p2[1]);
+    if(!Number.isFinite(x0) || !Number.isFinite(y0) || !Number.isFinite(x1) || !Number.isFinite(y1)) return;
+    add("line", {x1: x0, y1: y0, x2: x1, y2: y1, class: "viewer-scale-line"});
+    add("line", {x1: x0, y1: y0 - 8, x2: x0, y2: y0 + 8, class: "viewer-scale-cap"});
+    add("line", {x1: x1, y1: y1 - 8, x2: x1, y2: y1 + 8, class: "viewer-scale-cap"});
+    add("circle", {cx: x0, cy: y0, r: 4.2, class: "viewer-scale-dot"});
+    add("circle", {cx: x1, cy: y1, r: 4.2, class: "viewer-scale-dot"});
+    const midX = (x0 + x1) * 0.5;
+    const midY = (y0 + y1) * 0.5;
+    const chipWidth = 126;
+    const chipHeight = 28;
+    const chipX = clamp(midX - chipWidth * 0.5, 10, Number(meta.width) - chipWidth - 10);
+    const chipY = clamp(midY - 44 - ((index % 2) * 24), 10, Number(meta.height) - chipHeight - 10);
+    add("rect", {x: chipX, y: chipY, width: chipWidth, height: chipHeight, rx: 8, ry: 8, class: "viewer-scale-chip"});
+    add("text", {x: chipX + 8, y: chipY + 12, class: "viewer-scale-text"}, `${sample.label} | ${fmt(sample.distance_in, 2)} in`);
+    add("text", {x: chipX + 8, y: chipY + 23, class: "viewer-scale-sub"}, `${fmt(sample.px_per_in, 4)} px/in`);
+  });
+
+  state.rows.forEach((row) => {
+    const point = String(sideKey) === "151" ? row.point151 : row.point152;
+    if(!point) return;
+    const isSelected = state.selectedTube === row.tube_number && !state.draft;
+    add("circle", {
+      cx: point.x,
+      cy: point.y,
+      r: isSelected ? 7.8 : 5.4,
+      class: `viewer-point${isSelected ? " selected" : ""}`,
+    });
+    add("text", {x: point.x + 8, y: point.y - 8, class: "viewer-number"}, String(row.tube_number));
+  });
+
+  if(state.draft){
+    const pendingPoint = String(sideKey) === "151" ? state.draft.point151 : state.draft.point152;
+    if(pendingPoint){
+      add("circle", {
+        cx: pendingPoint.x,
+        cy: pendingPoint.y,
+        r: 7.8,
+        class: "viewer-point pending",
+      });
+      add("text", {x: pendingPoint.x + 8, y: pendingPoint.y - 8, class: "viewer-number"}, `T${state.draft.tube_number}`);
+    }
+  }
+
+  if(refLine && refLine.mark_02 && refLine.mark_03){
+    const x0 = Number(refLine.mark_02[0]);
+    const y0 = Number(refLine.mark_02[1]);
+    const x1 = Number(refLine.mark_03[0]);
+    const y1 = Number(refLine.mark_03[1]);
+    if(Number.isFinite(x0) && Number.isFinite(y0) && Number.isFinite(x1) && Number.isFinite(y1)){
+      const minX = Math.min(x0, x1) - 5;
+      const minY = Math.min(y0, y1);
+      add("polygon", {
+        points: `${x0-5},${y0} ${x0+5},${y0} ${x1+5},${y1} ${x1-5},${y1}`,
+        class: "viewer-ref-band",
+        opacity: "0.22",
+      });
+      add("line", {x1: x0, y1: y0, x2: x1, y2: y1, class: "viewer-ref-line"});
+      add("line", {x1: x0 - 10, y1: y0, x2: x0 + 10, y2: y0, class: "viewer-ref-cap"});
+      add("line", {x1: x1 - 10, y1: y1, x2: x1 + 10, y2: y1, class: "viewer-ref-cap"});
+      const chipX = clamp(Math.max(x0, x1) + 10, 8, Number(meta.width) - 86);
+      const chipY = clamp(Math.min(y0, y1) + 4, 10, Number(meta.height) - 24);
+      add("rect", {x: chipX, y: chipY, width: 78, height: 20, rx: 10, ry: 10, class: "viewer-ref-chip"});
+      add("text", {x: chipX + 10, y: chipY + 14, class: "viewer-ref-text"}, `Ref ${fmt(side.reference_in, 2)} in`);
+    }
+  } else if(Number.isFinite(refX)){
+    add("rect", {
+      x: refX - 5,
+      y: 10,
+      width: 10,
+      height: Math.max(0, Number(meta.height) - 20),
+      class: "viewer-ref-band",
+      opacity: "0.22",
+    });
+    add("line", {x1: refX, y1: 16, x2: refX, y2: Number(meta.height) - 16, class: "viewer-ref-line"});
+    add("line", {x1: refX - 10, y1: 16, x2: refX + 10, y2: 16, class: "viewer-ref-cap"});
+    add("line", {x1: refX - 10, y1: Number(meta.height) - 16, x2: refX + 10, y2: Number(meta.height) - 16, class: "viewer-ref-cap"});
+    const chipX = clamp(refX + 10, 8, Number(meta.width) - 86);
+    add("rect", {x: chipX, y: 10, width: 78, height: 20, rx: 10, ry: 10, class: "viewer-ref-chip"});
+    add("text", {x: chipX + 10, y: 24, class: "viewer-ref-text"}, `Ref ${fmt(side.reference_in, 2)} in`);
+  }
+
+  if(Number.isFinite(pxPerIn) && pxPerIn > 0){
+    add("rect", {x: 10, y: 10, width: 122, height: 20, rx: 10, ry: 10, class: "viewer-final-chip"});
+    add("text", {x: 18, y: 24, class: "viewer-final-text"}, `Final ${fmt(pxPerIn, 4)} px/in`);
+  }
+
+  const activePoint = selected ? (String(sideKey) === "151" ? selected.point151 : selected.point152) : null;
+  const refAtPoint = activePoint ? refLineAtY(sideKey, activePoint.y) : null;
+  if(activePoint && Number.isFinite(refAtPoint) && Number.isFinite(pxPerIn) && pxPerIn > 0){
+    const measure = manualMeasure(sideKey, activePoint);
+    const lineStart = Math.min(refAtPoint, Number(activePoint.x));
+    const lineEnd = Math.max(refAtPoint, Number(activePoint.x));
+    add("line", {x1: lineStart, y1: activePoint.y, x2: lineEnd, y2: activePoint.y, class: "viewer-measure-line"});
+    add("line", {x1: refAtPoint, y1: activePoint.y - 8, x2: refAtPoint, y2: activePoint.y + 8, class: "viewer-measure-cap"});
+    add("line", {x1: activePoint.x, y1: activePoint.y - 8, x2: activePoint.x, y2: activePoint.y + 8, class: "viewer-measure-cap"});
+    const chipX = clamp(((refAtPoint + Number(activePoint.x)) * 0.5) - 32, 10, Number(meta.width) - 88);
+    const chipY = clamp(activePoint.y - 34, 10, Number(meta.height) - 28);
+    add("rect", {x: chipX, y: chipY, width: 74, height: 22, rx: 10, ry: 10, class: "viewer-measure-chip"});
+    add("text", {x: chipX + 10, y: chipY + 15, class: "viewer-measure-text"}, `${fmt(measure, 2)} in`);
+
+    const boxWidth = 108;
+    const boxHeight = 34;
+    const preferLeft = Number(activePoint.x) > (Number(meta.width) * 0.64);
+    const desiredBoxX = preferLeft ? Number(activePoint.x) - boxWidth - 16 : Number(activePoint.x) + 16;
+    let boxX = clamp(desiredBoxX, 10, Number(meta.width) - boxWidth - 10);
+    let boxY = clamp(Number(activePoint.y) + 14, 10, Number(meta.height) - boxHeight - 10);
+    const chipBottom = chipY + 22;
+    if(boxY < chipBottom + 8){
+      boxY = clamp(chipBottom + 8, 10, Number(meta.height) - boxHeight - 10);
+    }
+    if(Math.abs(boxX - chipX) < 84 && boxY <= chipBottom + 10){
+      boxX = clamp(preferLeft ? chipX - boxWidth - 12 : chipX + 86, 10, Number(meta.width) - boxWidth - 10);
+    }
+    add("rect", {x: boxX, y: boxY, width: boxWidth, height: boxHeight, rx: 10, ry: 10, class: `viewer-label-box${state.draft ? " pending" : ""}`});
+    add("text", {x: boxX + 10, y: boxY + 14, class: "viewer-title"}, `Tubo ${selected.tube_number}`);
+    add("text", {x: boxX + 10, y: boxY + 28, class: "viewer-sub"}, String(sideKey) === "152" ? (manualPosition152(activePoint) === "before" ? "antes ref" : "despues ref") : "lado 151");
+  }
+
+  if(ruler.p1){
+    add("circle", {cx: ruler.p1.x, cy: ruler.p1.y, r: 5.6, class: "viewer-ruler-point"});
+  }
+  if(ruler.p2){
+    add("line", {x1: ruler.p1.x, y1: ruler.p1.y, x2: ruler.p2.x, y2: ruler.p2.y, class: "viewer-ruler-line"});
+    add("line", {x1: ruler.p1.x, y1: ruler.p1.y - 8, x2: ruler.p1.x, y2: ruler.p1.y + 8, class: "viewer-ruler-cap"});
+    add("line", {x1: ruler.p2.x, y1: ruler.p2.y - 8, x2: ruler.p2.x, y2: ruler.p2.y + 8, class: "viewer-ruler-cap"});
+    add("circle", {cx: ruler.p2.x, cy: ruler.p2.y, r: 5.6, class: "viewer-ruler-point"});
+    const midX = (Number(ruler.p1.x) + Number(ruler.p2.x)) * 0.5;
+    const midY = (Number(ruler.p1.y) + Number(ruler.p2.y)) * 0.5;
+    const chipWidth = 132;
+    const chipHeight = 28;
+    const chipX = clamp(midX - chipWidth * 0.5, 10, Number(meta.width) - chipWidth - 10);
+    const chipY = clamp(midY - 40, 10, Number(meta.height) - chipHeight - 10);
+    add("rect", {x: chipX, y: chipY, width: chipWidth, height: chipHeight, rx: 8, ry: 8, class: "viewer-ruler-chip"});
+    add("text", {x: chipX + 8, y: chipY + 12, class: "viewer-ruler-text"}, `${rulerModeLabel(ruler.mode)} | ${fmt(rulerDistanceIn(sideKey), 2)} in`);
+    add("text", {x: chipX + 8, y: chipY + 23, class: "viewer-ruler-sub"}, `${fmt(rulerDistancePx(sideKey), 1)} px`);
+  }
+}
+
+function renderViewers(){
+  renderViewer("151");
+  renderViewer("152");
+}
+
+function setViewerZoom(sideKey, nextZoom, focusEvent=null){
+  const viewer = els.viewers[String(sideKey)];
+  const meta = imageState(sideKey);
+  if(!viewer || !meta.available) return;
+  const previousZoom = state.zoom[String(sideKey)] || 1;
+  const targetZoom = Math.max(0.2, nextZoom);
+  if(Math.abs(targetZoom - previousZoom) < 0.0001) return;
+
+  const rect = viewer.scroll.getBoundingClientRect();
+  const focusContentX = focusEvent
+    ? (viewer.scroll.scrollLeft + (focusEvent.clientX - rect.left)) / previousZoom
+    : (viewer.scroll.scrollLeft + (viewer.scroll.clientWidth * 0.5)) / previousZoom;
+  const focusContentY = focusEvent
+    ? (viewer.scroll.scrollTop + (focusEvent.clientY - rect.top)) / previousZoom
+    : (viewer.scroll.scrollTop + (viewer.scroll.clientHeight * 0.5)) / previousZoom;
+
+  state.zoom[String(sideKey)] = targetZoom;
+  renderViewer(String(sideKey));
+  requestAnimationFrame(() => {
+    const nextRect = viewer.scroll.getBoundingClientRect();
+    const visualX = focusEvent ? focusEvent.clientX - nextRect.left : viewer.scroll.clientWidth * 0.5;
+    const visualY = focusEvent ? focusEvent.clientY - nextRect.top : viewer.scroll.clientHeight * 0.5;
+    viewer.scroll.scrollLeft = Math.max(0, focusContentX * targetZoom - visualX);
+    viewer.scroll.scrollTop = Math.max(0, focusContentY * targetZoom - visualY);
+  });
+}
+
+function startViewerPan(sideKey, event){
+  if(event.button !== 1) return;
+  const viewer = els.viewers[String(sideKey)];
+  const meta = imageState(sideKey);
+  if(!viewer || !meta.available) return;
+  event.preventDefault();
+  state.pan = {
+    side: String(sideKey),
+    startClientX: event.clientX,
+    startClientY: event.clientY,
+    startScrollLeft: viewer.scroll.scrollLeft,
+    startScrollTop: viewer.scroll.scrollTop,
+  };
+  viewer.scroll.classList.add("panning");
+}
+
+function moveViewerPan(event){
+  if(!state.pan) return;
+  const viewer = els.viewers[state.pan.side];
+  if(!viewer) return;
+  event.preventDefault();
+  const dx = event.clientX - state.pan.startClientX;
+  const dy = event.clientY - state.pan.startClientY;
+  viewer.scroll.scrollLeft = Math.max(0, state.pan.startScrollLeft - dx);
+  viewer.scroll.scrollTop = Math.max(0, state.pan.startScrollTop - dy);
+}
+
+function endViewerPan(){
+  if(!state.pan) return;
+  const viewer = els.viewers[state.pan.side];
+  if(viewer){
+    viewer.scroll.classList.remove("panning");
+  }
+  state.pan = null;
+}
+
+async function submit(confirmed, action=""){
+  if(state.submitted) return;
+  state.submitted = true;
+  try{
+    const response = await fetch("/result", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        confirmed,
+        action,
+        rows: state.rows,
+      }),
+    });
+    const payload = await response.json();
+    if(!response.ok || payload.error){
+      throw new Error(payload.error || `HTTP ${response.status}`);
+    }
+    if(payload.confirmed){
+      els.headerSub.textContent = `Guardado: ${payload.xlsx_path}`;
+    }else if(payload.closed){
+      els.headerSub.textContent = "Cancelado.";
+    }else{
+      state.submitted = false;
+      return;
+    }
+    setTimeout(() => window.close(), 350);
+  }catch(err){
+    state.submitted = false;
+    alert(`No se pudo guardar la medicion manual: ${err.message}`);
+  }
+}
+
+function renderAll(){
+  const leftName = sideState("151").image_name || sideState("151").dataset_name || "cam151";
+  const rightName = sideState("152").image_name || sideState("152").dataset_name || "cam152";
+  els.headerSub.textContent = `${leftName} <-> ${rightName}`;
+  els.workflowText.textContent = workflowText();
+  els.deleteTubeBtn.disabled = state.selectedTube === null && !state.draft;
+  els.confirmBtn.disabled = state.rows.length === 0;
+  renderMetrics();
+  renderTable();
+  renderViewers();
+}
+
+Object.entries(els.viewers).forEach(([sideKey, viewer]) => {
+  viewer.overlay.addEventListener("click", (event) => handleViewerClick(sideKey, event));
+  viewer.scroll.addEventListener("mousedown", (event) => startViewerPan(sideKey, event));
+  viewer.scroll.addEventListener("auxclick", (event) => {
+    if(event.button === 1){
+      event.preventDefault();
+    }
+  });
+  viewer.img.addEventListener("dragstart", (event) => event.preventDefault());
+  viewer.zoomIn.addEventListener("click", () => setViewerZoom(sideKey, (state.zoom[sideKey] || 1) * 1.2));
+  viewer.zoomOut.addEventListener("click", () => setViewerZoom(sideKey, (state.zoom[sideKey] || 1) / 1.2));
+  viewer.zoomReset.addEventListener("click", () => setViewerZoom(sideKey, 1));
+  viewer.rulerFree.addEventListener("click", () => setRulerMode(sideKey, "free"));
+  viewer.rulerH.addEventListener("click", () => setRulerMode(sideKey, "horizontal"));
+  viewer.rulerV.addEventListener("click", () => setRulerMode(sideKey, "vertical"));
+  viewer.rulerClear.addEventListener("click", () => clearRuler(sideKey));
+  viewer.scroll.addEventListener("wheel", (event) => {
+    if(!event.ctrlKey) return;
+    event.preventDefault();
+    const factor = event.deltaY < 0 ? 1.12 : (1 / 1.12);
+    setViewerZoom(sideKey, (state.zoom[sideKey] || 1) * factor, event);
+  }, {passive: false});
+});
+
+window.addEventListener("mousemove", moveViewerPan);
+window.addEventListener("mouseup", endViewerPan);
+
+els.addTubeBtn.addEventListener("click", startAddTube);
+els.deleteTubeBtn.addEventListener("click", deleteSelectedTube);
+els.cancelBtn.addEventListener("click", () => submit(false, "cancel"));
+els.confirmBtn.addEventListener("click", () => submit(true, "confirm"));
+
+window.addEventListener("keydown", (event) => {
+  if(event.key === "Escape"){
+    event.preventDefault();
+    submit(false, "cancel");
+  }
+  if(event.key === "Delete" || event.key === "Backspace"){
+    if(event.target && ["INPUT", "TEXTAREA"].includes(event.target.tagName)) return;
+    event.preventDefault();
+    deleteSelectedTube();
+  }
+});
+
+window.addEventListener("beforeunload", () => {
+  if(!state.submitted){
+    navigator.sendBeacon("/result", JSON.stringify({confirmed: false, action: "close"}));
+  }
+});
+
+renderAll();
+</script>
+</body>
+</html>
