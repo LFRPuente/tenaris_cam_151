@@ -30,6 +30,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch", type=int, default=8)
     parser.add_argument("--project", default=str(PIPE_END_ROOT / "runs" / "pipe_end"))
     parser.add_argument("--name", default="train")
+    parser.add_argument(
+        "--include-unlabeled-background",
+        action="store_true",
+        help="Include images without boxes as background examples. Default trains only on labels with boxes.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
@@ -52,8 +57,11 @@ def main() -> None:
         str(args.labels_root),
         "--output-root",
         str(args.output_root),
-        "--allow-missing-labels",
     ]
+    if args.include_unlabeled_background:
+        prepare_cmd.append("--allow-missing-labels")
+    else:
+        prepare_cmd.append("--require-box-labels")
     train_cmd = [
         "yolo",
         "detect",

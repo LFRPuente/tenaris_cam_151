@@ -35,6 +35,11 @@ def parse_args() -> argparse.Namespace:
         help="Treat images without labels as background images with empty YOLO labels.",
     )
     parser.add_argument(
+        "--require-box-labels",
+        action="store_true",
+        help="Use only images whose label file contains at least one box.",
+    )
+    parser.add_argument(
         "--status-path",
         type=Path,
         default=Path("annotation_pool/image_status.json"),
@@ -92,6 +97,10 @@ def validate_label_file(label_path: Path) -> None:
         validate_label_line(label_path, raw_line, index)
 
 
+def label_has_boxes(label_path: Path) -> bool:
+    return any(line.strip() for line in label_path.read_text(encoding="utf-8").splitlines())
+
+
 def load_bad_warp_set(status_path: Path) -> set[str]:
     if not status_path.exists():
         return set()
@@ -104,6 +113,7 @@ def collect_samples(
     images_root: Path,
     labels_root: Path,
     allow_missing_labels: bool,
+    require_box_labels: bool,
     bad_warp_set: set[str],
 ) -> list[Sample]:
     samples: list[Sample] = []
@@ -116,7 +126,11 @@ def collect_samples(
         expected_label = (labels_root / relative_stem).with_suffix(".txt")
         if expected_label.exists():
             validate_label_file(expected_label)
+            if require_box_labels and not label_has_boxes(expected_label):
+                continue
             label_path: Path | None = expected_label
+        elif require_box_labels:
+            continue
         elif allow_missing_labels:
             label_path = None
         else:
@@ -200,7 +214,7 @@ def main() -> None:
     output_root.mkdir(parents=True, exist_ok=True)
 
     bad_warp_set = set() if args.include_bad else load_bad_warp_set(status_path)
-    samples = collect_samples(images_root, labels_root, args.allow_missing_labels, bad_warp_set)
+    samples = collect_samples(images_root, labels_root, args.allow_missing_labels, args.require_box_labels, bad_warp_set)
     if not samples:
         raise ValueError("No images were found to build the dataset.")
 

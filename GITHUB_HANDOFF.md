@@ -237,6 +237,12 @@ python pipe_end_detection\scripts\train_yolo.py `
   --name pipe_end_active
 ```
 
+Default behavior:
+
+- images with box labels are used for training;
+- unannotated images remain available in the annotator;
+- unannotated images are not treated as background unless `--include-unlabeled-background` is passed explicitly.
+
 If GPU memory allows it, increase `--batch` first. Do not reduce `--epochs` or `--imgsz` unless a controlled validation run shows better results.
 
 Generate predictions:

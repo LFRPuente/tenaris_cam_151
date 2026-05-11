@@ -159,6 +159,14 @@ python pipe_end_detection\scripts\train_yolo.py `
   --name pipe_end_active
 ```
 
+By default this training command uses only images whose YOLO label file contains at least one box. Unannotated images stay in the annotation pool for later review, but they are not treated as background examples.
+
+Only use this when you intentionally want empty/unlabeled images as background training data:
+
+```powershell
+python pipe_end_detection\scripts\train_yolo.py --include-unlabeled-background
+```
+
 If GPU memory allows it, increase only `--batch` first. Keep `imgsz=1280` unless a validation run proves another size is better.
 
 Useful GPU checks:
