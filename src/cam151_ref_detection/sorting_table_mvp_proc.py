@@ -13,11 +13,19 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import cv2
 import numpy as np
 
+from .capture_history import (
+    CaptureRunError,
+    capture_and_process_pair,
+    delete_capture_run,
+    list_capture_run_manifests,
+    load_capture_run_manifest,
+    load_latest_capture_run_manifest,
+)
 from .homography_preview import build_homography_preview
 from .roi_store import load_rois
 from .tube_matcher_proc import (
@@ -30,6 +38,7 @@ from .tube_matcher_proc import (
 
 MATCH_RESULT_VERSION = 1
 _MATCH_STAMP_RE = re.compile(r"cam(?P<side>151|152)_tube_measurements_(?P<stamp>\d{8}_\d{6})\.json$", re.IGNORECASE)
+_ASSET_TOKEN_RE = re.compile(r"[^a-zA-Z0-9_-]+")
 
 
 @dataclass
@@ -59,7 +68,7 @@ def _display_jupyter_link(url: str) -> None:
     shell = get_ipython()
     if shell is None or shell.__class__.__name__ != "ZMQInteractiveShell":
         return
-    display(HTML(f'<a href="{url}" target="_blank">Abrir Sorting Table MVP</a>'))
+    display(HTML(f'<a href="{url}" target="_blank">Open Sorting Table MVP</a>'))
 
 
 def _default_match_dir() -> Path:
@@ -105,6 +114,118 @@ def _image_mime_type(path: str | Path) -> str:
     return "application/octet-stream"
 
 
+def _asset_token(value: Any, *, fallback: str) -> str:
+    cleaned = _ASSET_TOKEN_RE.sub("_", str(value or "").strip()).strip("_")
+    return cleaned or fallback
+
+
+def _resolve_manifest_match_source(manifest: dict[str, Any]) -> Path:
+    processing = dict(manifest.get("processing") or {})
+    for candidate in (
+        processing.get("match_latest_json_path"),
+        processing.get("match_json_path"),
+    ):
+        path = _resolve_existing_path(candidate)
+        if path is not None:
+            return path
+    raise FileNotFoundError(f"Run {manifest.get('run_id')!r} does not have a usable matching result.")
+
+
+def _run_state_from_manifest(manifest: dict[str, Any] | None, *, latest_run_id: str | None = None) -> dict[str, Any] | None:
+    if not isinstance(manifest, dict):
+        return None
+    processing = dict(manifest.get("processing") or {})
+    summary = dict(processing.get("summary") or {})
+    pipe_end_yolo = dict(processing.get("pipe_end_yolo") or {})
+    tube_counts = dict(processing.get("tube_counts") or {})
+    run_id = str(manifest.get("run_id") or "").strip()
+    return {
+        "run_id": run_id,
+        "captured_at": str(manifest.get("captured_at") or ""),
+        "status": str(manifest.get("status") or ""),
+        "summary": {
+            "matched": int(summary.get("matched") or 0),
+            "left_only": int(summary.get("left_only") or 0),
+            "right_only": int(summary.get("right_only") or 0),
+        },
+        "detection_source": str(processing.get("detection_source") or ""),
+        "tube_counts": {
+            "cam151": int(tube_counts.get("cam151") or 0),
+            "cam152": int(tube_counts.get("cam152") or 0),
+        },
+        "pipe_end_yolo": pipe_end_yolo,
+        "cam151_image_name": str((((manifest.get("cameras") or {}).get("cam151") or {}).get("image_name")) or ""),
+        "cam152_image_name": str((((manifest.get("cameras") or {}).get("cam152") or {}).get("image_name")) or ""),
+        "error": str(manifest.get("error") or ""),
+        "is_latest": bool(run_id and latest_run_id and run_id == latest_run_id),
+    }
+
+
+def _history_entry_from_manifest(manifest: dict[str, Any], *, latest_run_id: str | None = None) -> dict[str, Any]:
+    run_state = _run_state_from_manifest(manifest, latest_run_id=latest_run_id) or {}
+    processing = dict(manifest.get("processing") or {})
+    can_open = _resolve_existing_path(processing.get("match_latest_json_path") or processing.get("match_json_path")) is not None
+    captured_at = str(manifest.get("captured_at") or "")
+    return {
+        **run_state,
+        "can_open": bool(can_open),
+        "captured_date": captured_at[:10] if captured_at else "",
+        "run_url": f"/?run_id={run_state.get('run_id')}" if can_open and run_state.get("run_id") else None,
+    }
+
+
+def _legacy_match_artifact_dir() -> Path:
+    return _default_match_dir()
+
+
+def _resolve_legacy_match_artifact(artifact_name: str) -> Path:
+    candidate = _legacy_match_artifact_dir() / Path(str(artifact_name or "")).name
+    if not candidate.exists():
+        raise FileNotFoundError(f"No existe artefacto historico: {artifact_name}")
+    return candidate
+
+
+def _history_entry_from_legacy_match(path: Path) -> dict[str, Any] | None:
+    if path.name.lower() == "tube_match_latest.json":
+        return None
+    payload = _load_match_result(path)
+    summary = dict(payload.get("summary") or {})
+    inputs = dict(payload.get("inputs") or {})
+    generated_at = str(payload.get("generated_at") or "")
+    artifact_name = path.name
+    artifact_id = f"artifact:{path.stem}"
+    return {
+        "run_id": artifact_id,
+        "captured_at": generated_at,
+        "status": "imported_artifact",
+        "summary": {
+            "matched": int(summary.get("matched") or 0),
+            "left_only": int(summary.get("left_only") or 0),
+            "right_only": int(summary.get("right_only") or 0),
+        },
+        "cam151_image_name": str(((inputs.get("cam151") or {}).get("image_name")) or ""),
+        "cam152_image_name": str(((inputs.get("cam152") or {}).get("image_name")) or ""),
+        "error": "",
+        "is_latest": False,
+        "can_open": True,
+        "captured_date": generated_at[:10] if generated_at else "",
+        "run_url": f"/?artifact={artifact_name}",
+        "artifact_name": artifact_name,
+    }
+
+
+def _list_legacy_history_entries() -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for path in sorted(_legacy_match_artifact_dir().glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            entry = _history_entry_from_legacy_match(path)
+        except Exception:
+            continue
+        if entry is not None:
+            entries.append(entry)
+    return entries
+
+
 def _is_cam152_image(image_path: str | Path) -> bool:
     # Alineado con el notebook/backend: la variante base cam_152.jpeg ya viene espejada,
     # pero los pares cam_152_* necesitan mirror adicional dentro del pipeline.
@@ -146,7 +267,7 @@ def find_latest_match_result(*, output_dir: str | Path | None = None) -> Path:
         return latest_path
     candidates = sorted(output_root.glob("tube_match_result_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
     if not candidates:
-        raise FileNotFoundError(f"No se encontro tube_match_latest.json ni historicos en {output_root}")
+        raise FileNotFoundError(f"Could not find tube_match_latest.json or any historical results under {output_root}")
     return candidates[0]
 
 
@@ -216,7 +337,7 @@ def _resolve_raw_image_path(dataset: dict[str, Any], match_payload: dict[str, An
     fallback = _repo_root() / "test_images" / image_name
     if fallback.exists():
         return fallback
-    raise FileNotFoundError(f"No se encontro imagen RAW para cam{side_key}: {image_name or 'sin nombre'}")
+    raise FileNotFoundError(f"Could not find a RAW image for cam{side_key}: {image_name or 'unnamed'}")
 
 
 def _resolve_roi_path(dataset: dict[str, Any], match_payload: dict[str, Any], side: str) -> Path:
@@ -232,7 +353,7 @@ def _resolve_roi_path(dataset: dict[str, Any], match_payload: dict[str, Any], si
     fallback = _default_manual_roi_path(str(dataset.get("image_name") or side_info.get("image_name") or ""))
     if fallback is not None:
         return fallback
-    raise FileNotFoundError(f"No se encontro ROI manual para cam{side_key}.")
+    raise FileNotFoundError(f"Could not find a manual ROI for cam{side_key}.")
 
 
 def _build_inverse_output_transform(image_path: Path, roi_payload: dict[str, Any], output_dir: Path) -> tuple[np.ndarray, tuple[int, int], bool]:
@@ -495,12 +616,14 @@ def _state_for_side(
     dataset: dict[str, Any],
     image_path: Path,
     roi_path: Path,
+    *,
+    asset_url: str,
 ) -> dict[str, Any]:
     side_key = _normalize_side(side)
     raw_bytes = image_path.read_bytes()
     image_bgr = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
     if image_bgr is None or image_bgr.size == 0:
-        raise FileNotFoundError(f"No se pudo leer la imagen RAW: {image_path}")
+        raise FileNotFoundError(f"Could not read the RAW image: {image_path}")
     raw_height, raw_width = image_bgr.shape[:2]
     roi_payload = load_rois(roi_path)
     transform_dir = _repo_root() / "artifacts" / "sorting_table_mvp" / f"cam{side_key}_{image_path.stem}"
@@ -510,7 +633,7 @@ def _state_for_side(
         "side": side_key,
         "title": f"RAW {'LEFT' if side_key == '151' else 'RIGHT'}",
         "image_name": image_path.name,
-        "url": f"/asset/cam{side_key}-raw{image_path.suffix.lower()}",
+        "url": str(asset_url),
         "mime_type": _image_mime_type(image_path),
         "width": int(raw_width),
         "height": int(raw_height),
@@ -523,18 +646,37 @@ def _state_for_side(
     }
 
 
-def _build_initial_state(match_payload: dict[str, Any], left_state: dict[str, Any], right_state: dict[str, Any]) -> dict[str, Any]:
+def _build_initial_state(
+    match_payload: dict[str, Any],
+    left_state: dict[str, Any],
+    right_state: dict[str, Any],
+    *,
+    current_run: dict[str, Any] | None,
+    is_latest_view: bool,
+) -> dict[str, Any]:
     rows = _build_table_rows(match_payload)
     summary = dict(match_payload.get("summary") or {})
+    detection_source = ""
+    pipe_end_yolo: dict[str, Any] = {}
+    if current_run:
+        detection_source = str(current_run.get("detection_source") or "")
+        pipe_end_yolo = dict(current_run.get("pipe_end_yolo") or {})
     return {
-        "title": "HK - SORTING TABLE (MVP)",
+        "title": "HK - Sorting Table",
         "generated_at": str(match_payload.get("generated_at") or _iso_now()),
         "match_source": str(match_payload.get("_input_path") or "latest"),
+        "history_url": "/history",
+        "latest_url": "/",
+        "capture_api_url": "/api/capture",
+        "current_run": current_run,
+        "is_latest_view": bool(is_latest_view),
         "summary": {
             "pipe_count": len(rows),
             "matched": int(summary.get("matched") or 0),
             "left_only": int(summary.get("left_only") or 0),
             "right_only": int(summary.get("right_only") or 0),
+            "detection_source": detection_source,
+            "pipe_end_yolo": pipe_end_yolo,
         },
         "rows": rows,
         "images": {
@@ -550,6 +692,104 @@ def _sorting_table_html(initial_state: dict[str, Any]) -> str:
     return html_template.replace("__INITIAL_STATE__", json.dumps(initial_state, ensure_ascii=False))
 
 
+def _sorting_table_history_html(initial_state: dict[str, Any]) -> str:
+    html_path = Path(__file__).with_name("sorting_table_history.html")
+    html_template = html_path.read_text(encoding="utf-8")
+    return html_template.replace("__HISTORY_STATE__", json.dumps(initial_state, ensure_ascii=False))
+
+
+def _framing_calibrator_html(initial_state: dict[str, Any]) -> str:
+    html_path = Path(__file__).with_name("framing_calibrator.html")
+    html_template = html_path.read_text(encoding="utf-8")
+    return html_template.replace("__CALIBRATOR_STATE__", json.dumps(initial_state, ensure_ascii=False))
+
+
+def _baseline_image_path_for_side(side: str) -> Path:
+    side_key = _normalize_side(side)
+    filename = "cam_151_202604022.jpeg" if side_key == "151" else "cam_152_202604022.jpeg"
+    path = _repo_root() / "test_images" / filename
+    if not path.exists():
+        raise FileNotFoundError(f"The April 22 base image for cam{side_key} does not exist: {path}")
+    return path
+
+
+def _load_image_dimensions(image_path: Path) -> tuple[int, int]:
+    image_bgr = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+    if image_bgr is None or image_bgr.size == 0:
+        raise FileNotFoundError(f"Could not read the image: {image_path}")
+    height, width = image_bgr.shape[:2]
+    return int(width), int(height)
+
+
+def _camera_overlay_path_from_manifest(manifest: dict[str, Any], side: str) -> tuple[Path, str]:
+    side_key = _normalize_side(side)
+    camera_key = f"cam{side_key}"
+    camera_entry = dict((manifest.get("cameras") or {}).get(camera_key) or {})
+    for field_name, source_kind in (
+        ("wide_source_image_path", "wide_source"),
+        ("image_path", "processed_capture"),
+    ):
+        candidate = _resolve_existing_path(camera_entry.get(field_name))
+        if candidate is not None:
+            return candidate, source_kind
+    raise FileNotFoundError(f"Run {manifest.get('run_id')!r} does not have a usable image for cam{side_key}.")
+
+
+def _calibrator_camera_state(
+    manifest: dict[str, Any],
+    side: str,
+    *,
+    asset_namespace: str,
+) -> tuple[dict[str, Any], dict[str, tuple[bytes, str]]]:
+    side_key = _normalize_side(side)
+    camera_key = f"cam{side_key}"
+    camera_entry = dict((manifest.get("cameras") or {}).get(camera_key) or {})
+    baseline_path = _baseline_image_path_for_side(side_key)
+    overlay_path, overlay_source_kind = _camera_overlay_path_from_manifest(manifest, side_key)
+    baseline_width, baseline_height = _load_image_dimensions(baseline_path)
+    overlay_width, overlay_height = _load_image_dimensions(overlay_path)
+    baseline_url = f"/asset/{asset_namespace}/baseline_cam{side_key}{baseline_path.suffix.lower()}"
+    overlay_url = f"/asset/{asset_namespace}/overlay_cam{side_key}{overlay_path.suffix.lower()}"
+    digital_framing = dict(camera_entry.get("digital_framing") or {})
+    initial_zoom_factor = max(1.0, float(digital_framing.get("zoom_factor") or 1.0))
+    initial_offset_x = float(digital_framing.get("offset_x") or 0.0)
+    initial_offset_y = float(digital_framing.get("offset_y") or 0.0)
+    initial_opacity = 0.55
+    return (
+        {
+            "side": side_key,
+            "label": f"cam{side_key}",
+            "baseline": {
+                "image_name": baseline_path.name,
+                "url": baseline_url,
+                "width": baseline_width,
+                "height": baseline_height,
+                "resolved_path": str(baseline_path),
+            },
+            "overlay": {
+                "image_name": overlay_path.name,
+                "url": overlay_url,
+                "width": overlay_width,
+                "height": overlay_height,
+                "resolved_path": str(overlay_path),
+                "source_kind": overlay_source_kind,
+            },
+            "initial_controls": {
+                "zoom_factor": round(initial_zoom_factor, 4),
+                "offset_x": round(initial_offset_x, 6),
+                "offset_y": round(initial_offset_y, 6),
+                "opacity": initial_opacity,
+            },
+            "current_capture_ptz": dict(camera_entry.get("ptz") or {}),
+            "current_digital_framing": digital_framing,
+        },
+        {
+            baseline_url: (baseline_path.read_bytes(), _image_mime_type(baseline_path)),
+            overlay_url: (overlay_path.read_bytes(), _image_mime_type(overlay_path)),
+        },
+    )
+
+
 def start_sorting_table_mvp_server(
     match_source: str | Path | dict[str, Any] | None = None,
     *,
@@ -560,9 +800,23 @@ def start_sorting_table_mvp_server(
     port: int | None = None,
 ) -> SortingTableMvpServerHandle:
     runtime_lock = threading.Lock()
+    capture_lock = threading.Lock()
+    asset_cache: dict[str, tuple[bytes, str]] = {}
 
-    def _build_runtime_snapshot() -> dict[str, Any]:
-        current_match_source = match_source if match_source is not None else find_latest_match_result()
+    def _build_runtime_snapshot(*, requested_run_id: str | None = None, requested_artifact_name: str | None = None) -> dict[str, Any]:
+        latest_manifest = load_latest_capture_run_manifest() if match_source is None else None
+        current_run_manifest: dict[str, Any] | None = None
+        current_run_state_override: dict[str, Any] | None = None
+        if requested_run_id:
+            current_run_manifest = load_capture_run_manifest(requested_run_id)
+            current_match_source = _resolve_manifest_match_source(current_run_manifest)
+        elif requested_artifact_name:
+            current_match_source = _resolve_legacy_match_artifact(requested_artifact_name)
+            current_run_state_override = _history_entry_from_legacy_match(Path(current_match_source))
+        else:
+            current_match_source = match_source if match_source is not None else find_latest_match_result()
+            current_run_manifest = latest_manifest
+
         match_payload = _load_match_result(current_match_source)
         left_dataset = _resolve_dataset_from_match(match_payload, "151", source_override=cam151_input)
         right_dataset = _resolve_dataset_from_match(match_payload, "152", source_override=cam152_input)
@@ -570,20 +824,115 @@ def start_sorting_table_mvp_server(
         right_image_path = _resolve_raw_image_path(right_dataset, match_payload, "152")
         left_roi_path = _resolve_roi_path(left_dataset, match_payload, "151")
         right_roi_path = _resolve_roi_path(right_dataset, match_payload, "152")
-        left_state = _state_for_side("151", match_payload, left_dataset, left_image_path, left_roi_path)
-        right_state = _state_for_side("152", match_payload, right_dataset, right_image_path, right_roi_path)
+        latest_run_id = str((latest_manifest or {}).get("run_id") or "").strip() or None
+        current_run_id = str((current_run_manifest or {}).get("run_id") or "").strip()
+        asset_namespace = _asset_token(
+            current_run_id or f"{left_image_path.stem}_{right_image_path.stem}_{match_payload.get('generated_at')}",
+            fallback="sorting_table_latest",
+        )
+        left_asset_url = f"/asset/{asset_namespace}/cam151{left_image_path.suffix.lower()}"
+        right_asset_url = f"/asset/{asset_namespace}/cam152{right_image_path.suffix.lower()}"
+        left_state = _state_for_side(
+            "151",
+            match_payload,
+            left_dataset,
+            left_image_path,
+            left_roi_path,
+            asset_url=left_asset_url,
+        )
+        right_state = _state_for_side(
+            "152",
+            match_payload,
+            right_dataset,
+            right_image_path,
+            right_roi_path,
+            asset_url=right_asset_url,
+        )
         asset_map = {
             str(left_state["url"]): (left_state["asset_bytes"], left_state["mime_type"]),
             str(right_state["url"]): (right_state["asset_bytes"], right_state["mime_type"]),
         }
-        initial_state = _build_initial_state(match_payload, left_state, right_state)
+        current_run_state = current_run_state_override or _run_state_from_manifest(current_run_manifest, latest_run_id=latest_run_id)
+        initial_state = _build_initial_state(
+            match_payload,
+            left_state,
+            right_state,
+            current_run=current_run_state,
+            is_latest_view=bool(
+                requested_run_id is None
+                or (current_run_state and current_run_state.get("is_latest"))
+            ),
+        )
         html = _sorting_table_html(initial_state)
         return {
             "asset_map": asset_map,
             "html_bytes": html.encode("utf-8"),
         }
 
+    def _build_history_state() -> dict[str, Any]:
+        latest_manifest = load_latest_capture_run_manifest()
+        latest_run_id = str((latest_manifest or {}).get("run_id") or "").strip() or None
+        entries = [_history_entry_from_manifest(manifest, latest_run_id=latest_run_id) for manifest in list_capture_run_manifests()]
+        entries.extend(_list_legacy_history_entries())
+        entries.sort(key=lambda item: str(item.get("captured_at") or item.get("run_id") or ""), reverse=True)
+        return {
+            "title": "Download History",
+            "history_url": "/history",
+            "latest_url": "/",
+            "capture_api_url": "/api/capture",
+            "delete_api_url": "/api/history",
+            "runs": entries,
+            "latest_run_id": latest_run_id,
+        }
+
+    def _build_framing_calibrator_snapshot(
+        *,
+        requested_run_id: str | None = None,
+        requested_camera: str | None = None,
+    ) -> dict[str, Any]:
+        manifest = load_capture_run_manifest(requested_run_id) if requested_run_id else load_latest_capture_run_manifest()
+        if manifest is None:
+            raise FileNotFoundError("There are no captured runs available for calibration.")
+        run_id = str(manifest.get("run_id") or "").strip()
+        latest_manifest = load_latest_capture_run_manifest()
+        latest_run_id = str((latest_manifest or {}).get("run_id") or "").strip() or None
+        camera_key = _normalize_side(requested_camera or "152")
+        asset_namespace = _asset_token(f"framing_{run_id}", fallback="framing_calibrator")
+        left_state, left_assets = _calibrator_camera_state(manifest, "151", asset_namespace=asset_namespace)
+        right_state, right_assets = _calibrator_camera_state(manifest, "152", asset_namespace=asset_namespace)
+        available_runs = [
+            {
+                "run_id": str(item.get("run_id") or ""),
+                "captured_at": str(item.get("captured_at") or ""),
+                "status": str(item.get("status") or ""),
+            }
+            for item in list_capture_run_manifests()
+        ]
+        initial_state = {
+            "title": "Digital Framing Calibrator",
+            "generated_at": _iso_now(),
+            "latest_url": "/",
+            "history_url": "/history",
+            "current_run_id": run_id,
+            "latest_run_id": latest_run_id,
+            "current_camera": camera_key,
+            "runs": available_runs,
+            "cameras": {
+                "151": left_state,
+                "152": right_state,
+            },
+        }
+        html = _framing_calibrator_html(initial_state)
+        asset_map: dict[str, tuple[bytes, str]] = {}
+        asset_map.update(left_assets)
+        asset_map.update(right_assets)
+        return {
+            "asset_map": asset_map,
+            "html_bytes": html.encode("utf-8"),
+        }
+
     runtime_box: dict[str, Any] = _build_runtime_snapshot()
+    asset_cache.update(runtime_box.get("asset_map") or {})
 
     class SortingTableHandler(BaseHTTPRequestHandler):
         def log_message(self, format: str, *args: Any) -> None:
@@ -603,22 +952,127 @@ def start_sorting_table_mvp_server(
             self.wfile.write(data)
 
         def _send_json(self, payload: dict[str, Any], status: int = 200) -> None:
-            self._send_bytes(json.dumps(payload).encode("utf-8"), "application/json; charset=utf-8", status)
+            self._send_bytes(json.dumps(payload, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8", status)
 
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
-            if parsed.path in {"/", "/index.html"}:
+            if parsed.path == "/framing-calibrator":
+                requested_run_id = str((parse_qs(parsed.query).get("run_id") or [""])[0]).strip() or None
+                requested_camera = str((parse_qs(parsed.query).get("camera") or [""])[0]).strip() or None
+                try:
+                    snapshot = _build_framing_calibrator_snapshot(
+                        requested_run_id=requested_run_id,
+                        requested_camera=requested_camera,
+                    )
+                except Exception as exc:
+                    self._send_json({"error": str(exc)}, status=500)
+                    return
                 with runtime_lock:
-                    runtime_box.update(_build_runtime_snapshot())
-                    html_bytes = runtime_box["html_bytes"]
+                    asset_cache.update(snapshot.get("asset_map") or {})
+                self._send_bytes(snapshot["html_bytes"], "text/html; charset=utf-8")
+                return
+            if parsed.path == "/history":
+                try:
+                    html = _sorting_table_history_html(_build_history_state())
+                except Exception as exc:
+                    self._send_json({"error": str(exc)}, status=500)
+                    return
+                self._send_bytes(html.encode("utf-8"), "text/html; charset=utf-8")
+                return
+            if parsed.path == "/api/history":
+                try:
+                    self._send_json(_build_history_state())
+                except Exception as exc:
+                    self._send_json({"error": str(exc)}, status=500)
+                return
+            if parsed.path in {"/", "/index.html"}:
+                requested_run_id = str((parse_qs(parsed.query).get("run_id") or [""])[0]).strip() or None
+                requested_artifact_name = str((parse_qs(parsed.query).get("artifact") or [""])[0]).strip() or None
+                with runtime_lock:
+                    try:
+                        snapshot = _build_runtime_snapshot(
+                            requested_run_id=requested_run_id,
+                            requested_artifact_name=requested_artifact_name,
+                        )
+                    except Exception as exc:
+                        self._send_json({"error": str(exc)}, status=500)
+                        return
+                    runtime_box.update(snapshot)
+                    asset_cache.update(snapshot.get("asset_map") or {})
+                    html_bytes = snapshot["html_bytes"]
                 self._send_bytes(html_bytes, "text/html; charset=utf-8")
                 return
             with runtime_lock:
-                asset = runtime_box["asset_map"].get(parsed.path)
+                asset = asset_cache.get(parsed.path)
             if asset is not None:
                 self._send_bytes(asset[0], asset[1])
                 return
             self._send_json({"error": "not found"}, status=404)
+
+        def do_POST(self) -> None:
+            parsed = urlparse(self.path)
+            if parsed.path != "/api/capture":
+                self._send_json({"error": "not found"}, status=404)
+                return
+            if not capture_lock.acquire(blocking=False):
+                self._send_json({"error": "A capture/processing job is already in progress."}, status=409)
+                return
+            try:
+                manifest = capture_and_process_pair()
+                with runtime_lock:
+                    if match_source is None:
+                        snapshot = _build_runtime_snapshot()
+                        runtime_box.update(snapshot)
+                        asset_cache.update(snapshot.get("asset_map") or {})
+                current_run = _run_state_from_manifest(manifest, latest_run_id=str(manifest.get("run_id") or ""))
+                self._send_json(
+                    {
+                        "ok": True,
+                        "run_id": str(manifest.get("run_id") or ""),
+                        "run_url": f"/?run_id={manifest.get('run_id')}",
+                        "history_url": "/history",
+                        "latest_url": "/",
+                        "current_run": current_run,
+                        "summary": dict((((manifest.get("processing") or {}).get("summary")) or {})),
+                    }
+                )
+            except CaptureRunError as exc:
+                self._send_json(
+                    {
+                        "error": str(exc),
+                        "run_id": exc.run_id,
+                        "manifest_path": None if exc.manifest_path is None else str(exc.manifest_path),
+                        "history_url": "/history",
+                    },
+                    status=500,
+                )
+            except Exception as exc:
+                self._send_json({"error": str(exc), "history_url": "/history"}, status=500)
+            finally:
+                capture_lock.release()
+
+        def do_DELETE(self) -> None:
+            parsed = urlparse(self.path)
+            prefix = "/api/history/"
+            if not parsed.path.startswith(prefix):
+                self._send_json({"error": "not found"}, status=404)
+                return
+            run_id = parsed.path[len(prefix):].strip("/")
+            if not run_id:
+                self._send_json({"error": "Missing run_id."}, status=400)
+                return
+            try:
+                result = delete_capture_run(run_id)
+            except FileNotFoundError as exc:
+                self._send_json({"error": str(exc)}, status=404)
+                return
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=400)
+                return
+            except Exception as exc:
+                self._send_json({"error": str(exc)}, status=500)
+                return
+            self._send_json({"ok": True, **result})
 
     bind_port = int(port or 0)
     server = ThreadingHTTPServer(("127.0.0.1", bind_port), SortingTableHandler)
@@ -627,13 +1081,13 @@ def start_sorting_table_mvp_server(
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
 
-    print(f"Sorting Table MVP listo: {url}")
+    print(f"Sorting Table MVP ready: {url}")
     _display_jupyter_link(url)
     if on_ready is not None:
         try:
             on_ready(url)
         except Exception as exc:
-            print(f"Aviso: callback on_ready fallo: {exc}")
+            print(f"Warning: on_ready callback failed: {exc}")
     if open_browser:
         try:
             webbrowser.open(url, new=1)

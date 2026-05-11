@@ -3,3 +3,5 @@ opencv-python
 pillow
 matplotlib
 ipython
+requests
+ultralytics

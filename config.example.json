@@ -1,0 +1,37 @@
+{
+  "user": "CAMERA_USER",
+  "password": "CAMERA_PASSWORD",
+  "disable_overlay": true,
+  "force_zoom_zero": true,
+  "stamp_download_time": false,
+  "snapshot": {
+    "resolution": "2048x1536",
+    "compression": 0,
+    "camera_id": 1
+  },
+  "ptz": {
+    "zoom": 0,
+    "pan": 0,
+    "tilt": 0,
+    "speed": 100,
+    "movement_sequence": "zoom_then_pan_tilt"
+  },
+  "digital_framing": {
+    "enabled": false,
+    "force_wide_capture": true,
+    "capture_zoom": 0,
+    "zoom_factor": 1.0,
+    "offset_x": 0.0,
+    "offset_y": 0.0
+  },
+  "cameras": [
+    {
+      "name": "cam151",
+      "ip": "10.3.2.151"
+    },
+    {
+      "name": "cam152",
+      "ip": "10.3.2.152"
+    }
+  ]
+}

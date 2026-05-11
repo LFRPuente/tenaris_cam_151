@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>HK - Sorting Table (MVP)</title>
+<title>HK - Sorting Table</title>
 <style>
 :root{
   --bg:#efe6ca;
@@ -74,6 +74,16 @@ body{
   display:flex;
   gap:10px;
   flex-wrap:wrap;
+}
+.action-status{
+  min-height:18px;
+  margin-bottom:14px;
+  padding:0 2px;
+  font-size:13px;
+  color:#5c533d;
+}
+.action-status.error{
+  color:#8c1f1f;
 }
 button{
   border:1px solid #8e7b42;
@@ -382,15 +392,19 @@ tbody tr.warn.selected td:first-child{
 <div class="shell">
   <div class="topbar">
     <div>
-      <p class="eyebrow">Cliente MVP</p>
-      <h1 class="title" id="pageTitle">HK - Sorting Table (MVP)</h1>
+      <h1 class="title" id="pageTitle">HK - Sorting Table</h1>
       <p class="subtitle" id="pageSubtitle"></p>
     </div>
     <div class="actions">
-      <button type="button" class="secondary" id="clearSelectionBtn">Limpiar selección</button>
-      <button type="button" id="refreshBtn">Recargar vista</button>
+      <button type="button" id="captureBtn">Download and Process</button>
+      <button type="button" class="secondary" id="historyBtn">History</button>
+      <button type="button" class="secondary" id="latestBtn" hidden>View Latest</button>
+      <button type="button" class="secondary" id="clearSelectionBtn">Clear Selection</button>
+      <button type="button" id="refreshBtn">Reload View</button>
     </div>
   </div>
+
+  <div class="action-status" id="actionStatus"></div>
 
   <div class="meta-strip">
     <div class="meta-card">
@@ -409,12 +423,16 @@ tbody tr.warn.selected td:first-child{
       <div class="meta-label">Right Only</div>
       <div class="meta-value" id="metricRightOnly">0</div>
     </div>
+    <div class="meta-card">
+      <div class="meta-label">Detector</div>
+      <div class="meta-value" id="metricDetector">-</div>
+    </div>
   </div>
 
   <div class="workspace">
     <section class="panel">
       <div class="panel-band">
-        <h2>HK - SORTING TABLE (MVP)</h2>
+        <h2>HK - SORTING TABLE</h2>
       </div>
       <div class="table-wrap">
         <table>
@@ -427,7 +445,7 @@ tbody tr.warn.selected td:first-child{
           </thead>
           <tbody id="tableBody"></tbody>
         </table>
-        <div class="empty" id="tableEmpty" hidden>No hay filas para mostrar.</div>
+        <div class="empty" id="tableEmpty" hidden>No rows to display.</div>
       </div>
       <div class="status-note" id="tableNote"></div>
     </section>
@@ -446,7 +464,7 @@ tbody tr.warn.selected td:first-child{
               <button type="button" class="secondary" data-zoom-side="151" data-zoom-action="in">+</button>
             </div>
           </div>
-          <div class="view-help">Rueda: zoom. Botón central: arrastrar.</div>
+          <div class="view-help">Wheel: zoom. Middle button: drag.</div>
           <div class="viewer-scroll" id="viewer151Scroll">
             <div class="viewer-stage" id="viewer151Stage">
               <img class="viewer-image" id="viewer151Image" alt="RAW LEFT">
@@ -467,7 +485,7 @@ tbody tr.warn.selected td:first-child{
               <button type="button" class="secondary" data-zoom-side="152" data-zoom-action="in">+</button>
             </div>
           </div>
-          <div class="view-help">Rueda: zoom. Botón central: arrastrar.</div>
+          <div class="view-help">Wheel: zoom. Middle button: drag.</div>
           <div class="viewer-scroll" id="viewer152Scroll">
             <div class="viewer-stage" id="viewer152Stage">
               <img class="viewer-image" id="viewer152Image" alt="RAW RIGHT">
@@ -478,8 +496,8 @@ tbody tr.warn.selected td:first-child{
       </div>
 
       <div class="legend">
-        <div class="legend-item"><span class="legend-chip" style="background:#54b8ff"></span>Match completo</div>
-        <div class="legend-item"><span class="legend-chip" style="background:#f2a84b"></span>Fila con lado faltante</div>
+        <div class="legend-item"><span class="legend-chip" style="background:#54b8ff"></span>Full match</div>
+        <div class="legend-item"><span class="legend-chip" style="background:#f2a84b"></span>Row with a missing side</div>
       </div>
     </section>
   </div>
@@ -512,10 +530,15 @@ const els = {
   metricMatched: document.getElementById("metricMatched"),
   metricLeftOnly: document.getElementById("metricLeftOnly"),
   metricRightOnly: document.getElementById("metricRightOnly"),
+  metricDetector: document.getElementById("metricDetector"),
   tableBody: document.getElementById("tableBody"),
   tableEmpty: document.getElementById("tableEmpty"),
   tableNote: document.getElementById("tableNote"),
+  actionStatus: document.getElementById("actionStatus"),
   refreshBtn: document.getElementById("refreshBtn"),
+  captureBtn: document.getElementById("captureBtn"),
+  historyBtn: document.getElementById("historyBtn"),
+  latestBtn: document.getElementById("latestBtn"),
   clearSelectionBtn: document.getElementById("clearSelectionBtn"),
   viewers: {
     "151": {
@@ -558,8 +581,19 @@ function summary(){
   return INITIAL.summary || {};
 }
 
+function runInfo(){
+  return INITIAL.current_run || null;
+}
+
 function rows(){
   return Array.isArray(INITIAL.rows) ? INITIAL.rows : [];
+}
+
+function detectorLabel(){
+  const source = String(summary().detection_source || "").toLowerCase();
+  if(source === "yolo_pipe_end") return "YOLO";
+  if(source) return source;
+  return "-";
 }
 
 function imageState(side){
@@ -569,6 +603,7 @@ function imageState(side){
 function setSelectedTube(tubeNumber, options = {}){
   state.selectedTube = tubeNumber === null ? null : Number(tubeNumber);
   renderHeader();
+  applyEnglishHeaderState();
   renderTable();
   renderViewers();
   if(options.focusSelection && state.selectedTube !== null){
@@ -582,16 +617,74 @@ function isWarningStatus(status){
   return ["left_only","right_only","left_only_manual","right_only_manual"].includes(String(status || ""));
 }
 
+function setActionStatus(message, options = {}){
+  els.actionStatus.textContent = String(message || "");
+  els.actionStatus.classList.toggle("error", Boolean(options.error));
+}
+
+function applyEnglishCopy(){
+  els.clearSelectionBtn.textContent = "Clear Selection";
+  els.tableEmpty.textContent = "No rows to display.";
+  for(const node of document.querySelectorAll(".view-help")){
+    node.textContent = "Wheel: zoom. Middle button: drag.";
+  }
+  const legendItems = document.querySelectorAll(".legend-item");
+  if(legendItems[0]){
+    legendItems[0].innerHTML = '<span class="legend-chip" style="background:#54b8ff"></span>Full match';
+  }
+  if(legendItems[1]){
+    legendItems[1].innerHTML = '<span class="legend-chip" style="background:#f2a84b"></span>Row with a missing side';
+  }
+}
+
 function renderHeader(){
-  els.pageTitle.textContent = INITIAL.title || "HK - Sorting Table (MVP)";
-  els.pageSubtitle.textContent = `Generado ${formatGeneratedAt(INITIAL.generated_at)} | Fuente: ${INITIAL.match_source || "latest"}`;
+  const currentRun = runInfo();
+  const subtitleParts = [
+    `Generated ${formatGeneratedAt(INITIAL.generated_at)}`,
+    `Source: ${INITIAL.match_source || "latest"}`,
+  ];
+  if(currentRun && currentRun.run_id){
+    subtitleParts.push(`Run: ${currentRun.run_id}`);
+  }
+  if(currentRun && currentRun.captured_at){
+    subtitleParts.push(`Capture: ${formatGeneratedAt(currentRun.captured_at)}`);
+  }
+  els.pageTitle.textContent = INITIAL.title || "HK - Sorting Table";
+  els.pageSubtitle.textContent = subtitleParts.join(" | ");
   els.metricPipes.textContent = String(summary().pipe_count || rows().length || 0);
   els.metricMatched.textContent = String(summary().matched || 0);
   els.metricLeftOnly.textContent = String(summary().left_only || 0);
   els.metricRightOnly.textContent = String(summary().right_only || 0);
+  els.metricDetector.textContent = detectorLabel();
+  els.latestBtn.hidden = Boolean(INITIAL.is_latest_view);
+  if(currentRun && currentRun.run_id){
+    setActionStatus(
+      INITIAL.is_latest_view
+        ? `Active latest: ${currentRun.run_id}.`
+        : `Viewing historical run ${currentRun.run_id}.`
+    );
+  } else {
+    setActionStatus("");
+  }
   els.tableNote.textContent = state.selectedTube === null
-    ? "Selecciona una fila, un valor o un marcador para resaltar el mismo tubo. Rueda para zoom y botón central para arrastrar."
-    : `Pipe #${state.selectedTube} seleccionado en ambas cámaras.`;
+    ? "Select a row, value, or marker to highlight the same pipe. Use the wheel to zoom and the middle button to drag."
+    : `Pipe #${state.selectedTube} selected in both cameras.`;
+}
+
+function applyEnglishHeaderState(){
+  const currentRun = runInfo();
+  if(currentRun && currentRun.run_id){
+    setActionStatus(
+      INITIAL.is_latest_view
+        ? `Active latest: ${currentRun.run_id}.`
+        : `Viewing historical run ${currentRun.run_id}.`
+    );
+  } else {
+    setActionStatus("");
+  }
+  els.tableNote.textContent = state.selectedTube === null
+    ? "Select a row, value, or marker to highlight the same pipe. Use the wheel to zoom and the middle button to drag."
+    : `Pipe #${state.selectedTube} selected in both cameras.`;
 }
 
 function renderTable(){
@@ -843,7 +936,7 @@ function renderViewer(sideKey){
   const height = Number(meta.height || 0);
   const markers = Array.isArray(meta.markers) ? meta.markers : [];
   viewer.title.textContent = meta.title || `RAW ${sideKey}`;
-  viewer.meta.textContent = `${meta.image_name || "sin imagen"} | ${markers.length} tubos numerados`;
+  viewer.meta.textContent = `${meta.image_name || "no image"} | ${markers.length} numbered pipes`;
   viewer.image.src = meta.url || "";
   viewer.stage.style.width = `${width}px`;
   viewer.stage.style.height = `${height}px`;
@@ -923,8 +1016,38 @@ function renderViewers(){
   renderViewer("152");
 }
 
+async function captureAndProcess(){
+  if(!INITIAL.capture_api_url) return;
+  els.captureBtn.disabled = true;
+  els.historyBtn.disabled = true;
+  els.refreshBtn.disabled = true;
+  setActionStatus("Downloading images and processing the pair. This may take a moment...");
+  try{
+    const response = await fetch(INITIAL.capture_api_url, {method:"POST"});
+    const payload = await response.json();
+    if(!response.ok){
+      throw new Error(payload.error || "Could not complete the capture.");
+    }
+    setActionStatus("Capture finished. Opening the processed run...");
+    window.location.href = payload.run_url || payload.latest_url || "/";
+  }catch(error){
+    setActionStatus(error && error.message ? error.message : "Could not complete the capture.", {error:true});
+  }finally{
+    els.captureBtn.disabled = false;
+    els.historyBtn.disabled = false;
+    els.refreshBtn.disabled = false;
+  }
+}
+
 function bindActions(){
   els.refreshBtn.addEventListener("click", () => window.location.reload());
+  els.captureBtn.addEventListener("click", () => { void captureAndProcess(); });
+  els.historyBtn.addEventListener("click", () => {
+    window.location.href = INITIAL.history_url || "/history";
+  });
+  els.latestBtn.addEventListener("click", () => {
+    window.location.href = INITIAL.latest_url || "/";
+  });
   els.clearSelectionBtn.addEventListener("click", () => setSelectedTube(null));
   for(const btn of document.querySelectorAll("[data-zoom-side][data-zoom-action]")){
     btn.addEventListener("click", () => {
@@ -941,7 +1064,9 @@ function bindActions(){
 }
 
 function boot(){
+  applyEnglishCopy();
   renderHeader();
+  applyEnglishHeaderState();
   renderTable();
   renderViewers();
   bindActions();

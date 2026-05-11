@@ -1,0 +1,2053 @@
+from __future__ import annotations
+
+import argparse
+import json
+import mimetypes
+import os
+import posixpath
+import random
+import re
+import shutil
+import socket
+import subprocess
+import sys
+import threading
+import time
+import tomllib
+import webbrowser
+from dataclasses import dataclass
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, quote, unquote, urlparse
+
+
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+CLASS_ID = 0
+CLASS_NAME = "pipe_end"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+PIPE_END_ROOT = REPO_ROOT / "pipe_end_detection"
+
+
+@dataclass(frozen=True)
+class AppPaths:
+    root: Path
+    images_root: Path
+    labels_root: Path
+    predictions_root: Path
+    status_path: Path
+    auto_train: bool
+    min_train_images: int
+    train_epochs: int
+    train_imgsz: int
+    train_batch: int
+    base_model: str
+    train_device: str
+    roi_toml_151: Path | None
+    roi_toml_152: Path | None
+    raw_image_151: Path | None
+    raw_image_152: Path | None
+
+
+class TrainingState:
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.running = False
+        self.pending = False
+        self.status = "idle"
+        self.message = "No training has run in this session."
+        self.annotated_images = 0
+        self.started_at: float | None = None
+        self.finished_at: float | None = None
+        self.weights_path: str | None = None
+        self.error: str | None = None
+
+    def snapshot(self) -> dict:
+        with self.lock:
+            return {
+                "running": self.running,
+                "pending": self.pending,
+                "status": self.status,
+                "message": self.message,
+                "annotated_images": self.annotated_images,
+                "started_at": self.started_at,
+                "finished_at": self.finished_at,
+                "weights_path": self.weights_path,
+                "error": self.error,
+            }
+
+
+TRAINING_STATE = TrainingState()
+
+
+def normalize_rel(path: str) -> Path:
+    decoded = unquote(path).replace("\\", "/")
+    normalized = posixpath.normpath(decoded).lstrip("/")
+    if normalized == "." or normalized.startswith("../") or "/../" in normalized:
+        raise ValueError(f"Unsafe relative path: {path}")
+    return Path(*normalized.split("/"))
+
+
+def rel_to_url(path: Path) -> str:
+    return quote(path.as_posix())
+
+
+def load_status(status_path: Path) -> dict:
+    if not status_path.exists():
+        return {"bad_warp": {}, "notes": {}}
+    data = json.loads(status_path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        return {"bad_warp": {}, "notes": {}}
+    data.setdefault("bad_warp", {})
+    data.setdefault("notes", {})
+    return data
+
+
+def save_status(status_path: Path, data: dict) -> None:
+    status_path.parent.mkdir(parents=True, exist_ok=True)
+    status_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def yolo_to_boxes(label_path: Path, image_width: int, image_height: int) -> list[dict]:
+    if not label_path.exists():
+        return []
+    boxes: list[dict] = []
+    for raw_line in label_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        parts = line.split()
+        if len(parts) not in {5, 6}:
+            continue
+        class_id, x_center, y_center, width, height = parts[:5]
+        if int(float(class_id)) != CLASS_ID:
+            continue
+        xc = float(x_center) * image_width
+        yc = float(y_center) * image_height
+        w = float(width) * image_width
+        h = float(height) * image_height
+        boxes.append(
+            {
+                "class_id": CLASS_ID,
+                "x": max(0.0, xc - 0.5 * w),
+                "y": max(0.0, yc - 0.5 * h),
+                "w": max(0.0, w),
+                "h": max(0.0, h),
+                "conf": float(parts[5]) if len(parts) == 6 else None,
+            }
+        )
+    return boxes
+
+
+def boxes_to_yolo(boxes: list[dict], image_width: int, image_height: int) -> str:
+    lines: list[str] = []
+    for box in boxes:
+        x = max(0.0, min(float(image_width), float(box.get("x", 0.0))))
+        y = max(0.0, min(float(image_height), float(box.get("y", 0.0))))
+        w = max(0.0, min(float(image_width) - x, float(box.get("w", 0.0))))
+        h = max(0.0, min(float(image_height) - y, float(box.get("h", 0.0))))
+        if w <= 0.0 or h <= 0.0:
+            continue
+        xc = (x + 0.5 * w) / float(image_width)
+        yc = (y + 0.5 * h) / float(image_height)
+        wn = w / float(image_width)
+        hn = h / float(image_height)
+        lines.append(f"{CLASS_ID} {xc:.6f} {yc:.6f} {wn:.6f} {hn:.6f}")
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
+def image_size(path: Path) -> tuple[int, int]:
+    # Pillow is not required. Use OpenCV if installed; otherwise parse enough JPEG/PNG metadata.
+    try:
+        import cv2  # type: ignore
+
+        img = cv2.imread(str(path), cv2.IMREAD_COLOR)
+        if img is not None:
+            h, w = img.shape[:2]
+            return int(w), int(h)
+    except Exception:
+        pass
+
+    suffix = path.suffix.lower()
+    data = path.read_bytes()
+    if suffix == ".png" and data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+    if suffix in {".jpg", ".jpeg"}:
+        i = 2
+        while i < len(data):
+            if data[i] != 0xFF:
+                i += 1
+                continue
+            marker = data[i + 1]
+            i += 2
+            if marker in {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}:
+                length = int.from_bytes(data[i : i + 2], "big")
+                segment = data[i : i + length]
+                h = int.from_bytes(segment[3:5], "big")
+                w = int.from_bytes(segment[5:7], "big")
+                return w, h
+            if marker in {0xD8, 0xD9}:
+                continue
+            length = int.from_bytes(data[i : i + 2], "big")
+            i += length
+    raise ValueError(f"Could not read image dimensions: {path}")
+
+
+def build_image_items(paths: AppPaths) -> list[dict]:
+    items: list[dict] = []
+    status = load_status(paths.status_path)
+    bad_warp = status.get("bad_warp", {})
+    for image_path in sorted(paths.images_root.rglob("*")):
+        if not image_path.is_file() or image_path.suffix.lower() not in IMAGE_SUFFIXES:
+            continue
+        rel = image_path.relative_to(paths.images_root)
+        label_path = (paths.labels_root / rel).with_suffix(".txt")
+        pred_path = (paths.predictions_root / rel).with_suffix(".txt")
+        rel_key = rel.as_posix()
+        width, height = image_size(image_path)
+        labeled_count = 0
+        if label_path.exists():
+            labeled_count = len([line for line in label_path.read_text(encoding="utf-8").splitlines() if line.strip()])
+        prediction_count = 0
+        if pred_path.exists():
+            prediction_count = len([line for line in pred_path.read_text(encoding="utf-8").splitlines() if line.strip()])
+        items.append(
+            {
+                "rel": rel_key,
+                "name": image_path.name,
+                "camera": rel.parts[0] if rel.parts else "",
+                "url": f"/image?path={rel_to_url(rel)}",
+                "label_rel": label_path.relative_to(paths.labels_root).as_posix(),
+                "prediction_rel": pred_path.relative_to(paths.predictions_root).as_posix(),
+                "width": width,
+                "height": height,
+                "box_count": labeled_count,
+                "prediction_count": prediction_count,
+                "labeled": labeled_count > 0,
+                "has_predictions": prediction_count > 0,
+                "bad_warp": bool(bad_warp.get(rel_key, False)),
+            }
+        )
+    return items
+
+
+def label_has_boxes(label_path: Path) -> bool:
+    return label_path.exists() and any(line.strip() for line in label_path.read_text(encoding="utf-8").splitlines())
+
+
+def collect_annotated_samples(paths: AppPaths) -> list[tuple[Path, Path, Path]]:
+    status = load_status(paths.status_path)
+    bad_warp = status.get("bad_warp", {})
+    samples: list[tuple[Path, Path, Path]] = []
+    for label_path in sorted(paths.labels_root.rglob("*.txt")):
+        if not label_has_boxes(label_path):
+            continue
+        rel = label_path.relative_to(paths.labels_root).with_suffix("")
+        if bad_warp.get(rel.with_suffix(".jpg").as_posix(), False) or bad_warp.get(rel.with_suffix(".jpeg").as_posix(), False):
+            continue
+        image_path = None
+        for suffix in IMAGE_SUFFIXES:
+            candidate = (paths.images_root / rel).with_suffix(suffix)
+            if candidate.exists():
+                image_path = candidate
+                break
+        if image_path is None:
+            continue
+        samples.append((image_path, label_path, rel))
+    return samples
+
+
+def copy_training_split(samples: list[tuple[Path, Path, Path]], split: str, dataset_root: Path) -> None:
+    for image_path, label_path, rel in samples:
+        target_image = (dataset_root / "images" / split / rel).with_suffix(image_path.suffix.lower())
+        target_label = (dataset_root / "labels" / split / rel).with_suffix(".txt")
+        target_image.parent.mkdir(parents=True, exist_ok=True)
+        target_label.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(image_path, target_image)
+        shutil.copy2(label_path, target_label)
+
+
+def prepare_active_dataset(paths: AppPaths, samples: list[tuple[Path, Path, Path]]) -> Path:
+    work_root = paths.root / "active_training"
+    dataset_root = work_root / "dataset"
+    if dataset_root.exists():
+        shutil.rmtree(dataset_root)
+    dataset_root.mkdir(parents=True, exist_ok=True)
+
+    shuffled = list(samples)
+    random.Random(42).shuffle(shuffled)
+    if len(shuffled) < 8:
+        train_samples = shuffled
+        val_samples = shuffled
+    else:
+        val_count = max(1, int(round(0.2 * len(shuffled))))
+        val_samples = shuffled[:val_count]
+        train_samples = shuffled[val_count:]
+    copy_training_split(train_samples, "train", dataset_root)
+    copy_training_split(val_samples, "val", dataset_root)
+
+    data_yaml = work_root / "data_active.yaml"
+    data_yaml.write_text(
+        f"path: {dataset_root.as_posix()}\n"
+        "train: images/train\n"
+        "val: images/val\n\n"
+        "names:\n"
+        f"  {CLASS_ID}: {CLASS_NAME}\n",
+        encoding="utf-8",
+    )
+    return data_yaml
+
+
+def schedule_training(paths: AppPaths, reason: str) -> dict:
+    with TRAINING_STATE.lock:
+        if TRAINING_STATE.running:
+            return {"scheduled": False, "reason": "AI job already running", "status": TRAINING_STATE.status}
+        TRAINING_STATE.running = True
+        TRAINING_STATE.pending = False
+        TRAINING_STATE.status = "queued"
+        TRAINING_STATE.message = f"Queued training after {reason}."
+        TRAINING_STATE.error = None
+    thread = threading.Thread(target=training_worker, args=(paths,), daemon=True)
+    thread.start()
+    return {"scheduled": True, "pending": False}
+
+
+def training_worker(paths: AppPaths) -> None:
+    try:
+        samples = collect_annotated_samples(paths)
+        with TRAINING_STATE.lock:
+            TRAINING_STATE.annotated_images = len(samples)
+        if len(samples) < paths.min_train_images:
+            with TRAINING_STATE.lock:
+                TRAINING_STATE.status = "skipped"
+                TRAINING_STATE.message = (
+                    f"Need at least {paths.min_train_images} annotated images; currently {len(samples)}."
+                )
+                TRAINING_STATE.finished_at = time.time()
+            return
+
+        with TRAINING_STATE.lock:
+            TRAINING_STATE.status = "training"
+            TRAINING_STATE.message = f"Training on {len(samples)} annotated images..."
+            TRAINING_STATE.started_at = time.time()
+            TRAINING_STATE.finished_at = None
+            TRAINING_STATE.error = None
+
+        data_yaml = prepare_active_dataset(paths, samples)
+        stable_weights = paths.root / "models" / "pipe_end_active" / "best.pt"
+        model_arg = str(stable_weights if stable_weights.exists() else paths.base_model)
+        train_cmd = [
+            "yolo",
+            "detect",
+            "train",
+            f"data={data_yaml}",
+            f"model={model_arg}",
+            f"imgsz={paths.train_imgsz}",
+            f"epochs={paths.train_epochs}",
+            f"batch={paths.train_batch}",
+            f"project={paths.root / 'runs' / 'pipe_end_active'}",
+            "name=latest",
+            "exist_ok=True",
+            "mosaic=0",
+            "fliplr=0",
+            "flipud=0",
+            "translate=0",
+            "scale=0",
+            "hsv_h=0",
+            "hsv_s=0",
+            "hsv_v=0",
+            "close_mosaic=0",
+            "workers=0",
+            f"device={paths.train_device}",
+        ]
+        subprocess.run(train_cmd, cwd=paths.root, check=True)
+
+        best_weight = paths.root / "runs" / "pipe_end_active" / "latest" / "weights" / "best.pt"
+        stable_weights.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(best_weight, stable_weights)
+
+        with TRAINING_STATE.lock:
+            TRAINING_STATE.status = "ready"
+            TRAINING_STATE.message = f"Model trained from {len(samples)} annotated images. Generate predictions when ready."
+            TRAINING_STATE.weights_path = stable_weights.relative_to(paths.root).as_posix()
+            TRAINING_STATE.finished_at = time.time()
+    except Exception as exc:
+        with TRAINING_STATE.lock:
+            TRAINING_STATE.status = "error"
+            TRAINING_STATE.message = str(exc)
+            TRAINING_STATE.error = str(exc)
+            TRAINING_STATE.finished_at = time.time()
+    finally:
+        with TRAINING_STATE.lock:
+            TRAINING_STATE.running = False
+
+
+def schedule_prediction(paths: AppPaths, reason: str) -> dict:
+    with TRAINING_STATE.lock:
+        if TRAINING_STATE.running:
+            return {"scheduled": False, "reason": "AI job already running", "status": TRAINING_STATE.status}
+        stable_weights = paths.root / "models" / "pipe_end_active" / "best.pt"
+        if not stable_weights.exists():
+            return {"scheduled": False, "reason": "No trained model found. Train AI first."}
+        TRAINING_STATE.running = True
+        TRAINING_STATE.pending = False
+        TRAINING_STATE.status = "queued"
+        TRAINING_STATE.message = f"Queued prediction generation after {reason}."
+        TRAINING_STATE.error = None
+    thread = threading.Thread(target=prediction_worker, args=(paths,), daemon=True)
+    thread.start()
+    return {"scheduled": True, "pending": False}
+
+
+def prediction_worker(paths: AppPaths) -> None:
+    try:
+        stable_weights = paths.root / "models" / "pipe_end_active" / "best.pt"
+        with TRAINING_STATE.lock:
+            TRAINING_STATE.status = "predicting"
+            TRAINING_STATE.message = "Generating AI predictions..."
+            TRAINING_STATE.started_at = time.time()
+            TRAINING_STATE.finished_at = None
+            TRAINING_STATE.weights_path = stable_weights.relative_to(paths.root).as_posix()
+            TRAINING_STATE.error = None
+
+        predict_cmd = [
+            sys.executable,
+            "scripts/predict_unlabeled.py",
+            "--weights",
+            str(stable_weights),
+            "--images-root",
+            str(paths.images_root),
+            "--labels-root",
+            str(paths.labels_root),
+            "--output-root",
+            str(paths.predictions_root.parent),
+            "--imgsz",
+            str(paths.train_imgsz),
+            "--conf",
+            "0.25",
+            "--include-labeled",
+        ]
+        subprocess.run(predict_cmd, cwd=paths.root, check=True)
+
+        with TRAINING_STATE.lock:
+            TRAINING_STATE.status = "ready"
+            TRAINING_STATE.message = "AI predictions generated."
+            TRAINING_STATE.finished_at = time.time()
+    except Exception as exc:
+        with TRAINING_STATE.lock:
+            TRAINING_STATE.status = "error"
+            TRAINING_STATE.message = str(exc)
+            TRAINING_STATE.error = str(exc)
+            TRAINING_STATE.finished_at = time.time()
+    finally:
+        with TRAINING_STATE.lock:
+            TRAINING_STATE.running = False
+
+
+def _read_roi_toml(path: Path) -> dict:
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    return {
+        "src_points_override": data.get("src_points_override"),
+        "dst_rect_override": data.get("dst_rect_override"),
+    }
+
+
+def _save_roi_dst_rect(path: Path, new_rect: list[float]) -> None:
+    text = path.read_text(encoding="utf-8")
+    formatted = ", ".join(f"{v:.3f}" for v in new_rect)
+    new_line = f"dst_rect_override = [{formatted}]"
+    if re.search(r"^dst_rect_override\s*=", text, re.MULTILINE):
+        text = re.sub(r"^dst_rect_override\s*=.*$", new_line, text, flags=re.MULTILINE)
+    else:
+        text = text.rstrip() + f"\n{new_line}\n"
+    path.write_text(text, encoding="utf-8")
+
+
+def _build_full_warp_jpeg(raw_image_path: Path, src_points: list) -> tuple[bytes, list[float], tuple[int, int]]:
+    """Warp the full raw image without dst_rect crop. Returns (jpeg_bytes, view_rect, (w, h))."""
+    import cv2  # type: ignore
+    import numpy as np  # type: ignore
+
+    img = cv2.imread(str(raw_image_path), cv2.IMREAD_COLOR)
+    if img is None:
+        raise FileNotFoundError(f"No se pudo leer: {raw_image_path}")
+    ih, iw = img.shape[:2]
+
+    pts = [(float(p[0]), float(p[1])) for p in src_points]
+    tl, tr, bl, br = pts
+
+    def _d(a: tuple, b: tuple) -> float:
+        return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
+
+    bw = max(240, int(round(max(_d(tl, tr), _d(bl, br)))))
+    bh = max(320, int(round(max(_d(tl, bl), _d(tr, br)))))
+
+    src = np.float32(pts)
+    dst = np.float32([[0, 0], [bw - 1, 0], [0, bh - 1], [bw - 1, bh - 1]])
+    M = cv2.getPerspectiveTransform(src, dst)
+
+    corners = np.float32([[[0, 0]], [[iw - 1, 0]], [[iw - 1, ih - 1]], [[0, ih - 1]]])
+    proj = cv2.perspectiveTransform(corners, M).reshape(-1, 2)
+    min_x = float(np.floor(proj[:, 0].min()))
+    min_y = float(np.floor(proj[:, 1].min()))
+    max_x = float(np.ceil(proj[:, 0].max()))
+    max_y = float(np.ceil(proj[:, 1].max()))
+    ow = max(80, int(round(max_x - min_x)))
+    oh = max(80, int(round(max_y - min_y)))
+
+    T = np.float64([[1, 0, -min_x], [0, 1, -min_y], [0, 0, 1]])
+    warped = cv2.warpPerspective(img, T @ M.astype(np.float64), (ow, oh))
+    ok, buf = cv2.imencode(".jpg", warped, [cv2.IMWRITE_JPEG_QUALITY, 88])
+    if not ok:
+        raise RuntimeError("No se pudo codificar el warp como JPEG")
+    return bytes(buf), [min_x, min_y, max_x, max_y], (ow, oh)
+
+
+def _roi_toml_for_camera(paths: "AppPaths", camera: str) -> "Path | None":
+    side = "151" if camera in ("cam151", "151") else "152" if camera in ("cam152", "152") else None
+    if side is None:
+        return None
+    return paths.roi_toml_151 if side == "151" else paths.roi_toml_152
+
+
+def _raw_image_for_camera(paths: "AppPaths", camera: str) -> "Path | None":
+    side = "151" if camera in ("cam151", "151") else "152"
+    return paths.raw_image_151 if side == "151" else paths.raw_image_152
+
+
+ROI_PICKER_HTML = r"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ROI Picker — Pipe End</title>
+  <style>
+    :root {
+      --bg: #101214; --panel: #1a1d21; --panel2: #22262c;
+      --line: #343a43; --text: #f2f1eb; --muted: #a8afba;
+      --accent: #ffd43b; --accent2: #32d583; --danger: #ff5c5c;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text);
+           font-family: "Segoe UI", Tahoma, sans-serif; overflow: hidden; }
+    .app { display: grid; grid-template-columns: 300px 1fr; height: 100vh; }
+    aside { background: linear-gradient(180deg, var(--panel), #111315);
+            border-right: 1px solid var(--line);
+            display: flex; flex-direction: column; overflow: hidden; }
+    header { padding: 16px; border-bottom: 1px solid var(--line); flex: 0 0 auto; }
+    h1 { margin: 0 0 6px; font-size: 18px; }
+    .small { color: var(--muted); font-size: 12px; line-height: 1.4; }
+    .controls { padding: 12px; border-bottom: 1px solid var(--line);
+                display: grid; gap: 8px; flex: 0 0 auto; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    select, button { border: 1px solid var(--line); border-radius: 8px;
+                     background: var(--panel2); color: var(--text);
+                     padding: 9px 10px; font-size: 14px; }
+    button { cursor: pointer; font-weight: 650; }
+    button:hover { border-color: var(--accent); }
+    button:disabled { opacity: 0.4; cursor: default; }
+    .primary { background: #5b4405; border-color: #8d6b0f; color: #fff7d1; }
+    .info { padding: 12px; font-size: 12px; color: var(--muted);
+            border-bottom: 1px solid var(--line); flex: 0 0 auto; }
+    .info b { color: var(--text); }
+    .info-row { margin-bottom: 5px; }
+    .log { padding: 12px; font-size: 12px; color: var(--muted);
+           flex: 1; overflow-y: auto; white-space: pre-wrap; }
+    main { display: grid; grid-template-rows: auto 1fr auto; min-width: 0; min-height: 0; }
+    .toolbar { display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+               border-bottom: 1px solid var(--line); background: rgba(0,0,0,.2); }
+    .toolbar .title { flex: 1; font-weight: 700; font-size: 13px;
+                      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .stage { overflow: hidden; position: relative; touch-action: none; background: #060708; }
+    .canvas-wrap { position: absolute; left: 0; top: 0; transform-origin: top left;
+                   will-change: transform; background: #060708; line-height: 0; }
+    #image { display: block; user-select: none; pointer-events: none; }
+    #overlay { position: absolute; inset: 0; cursor: crosshair; }
+    .footer { display: flex; gap: 12px; align-items: center; padding: 8px 12px;
+               border-top: 1px solid var(--line); color: var(--muted); font-size: 12px;
+               background: rgba(0,0,0,.25); flex: 0 0 auto; }
+    .kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px;
+           padding: 1px 5px; background: var(--panel2); font-size: 11px; color: var(--text); }
+    #statusSpan { font-weight: 700; color: var(--accent); }
+  </style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <header>
+      <h1>ROI Picker</h1>
+      <div class="small">Dibuja un rectángulo sobre la imagen warpeada completa para definir la región de recorte. El rectángulo verde es el nuevo ROI; el amarillo punteado es el actual.</div>
+    </header>
+    <div class="controls">
+      <select id="camSel"><option value="cam151">cam151</option><option value="cam152">cam152</option></select>
+      <button id="loadBtn">Cargar imagen</button>
+      <div class="row">
+        <button id="saveBtn" class="primary" disabled>Guardar (Ctrl+S)</button>
+        <button id="resetBtn">Resetear</button>
+      </div>
+    </div>
+    <div class="info" id="infoPanel">
+      <div class="info-row"><b>ROI actual:</b><br><span id="curRoi">—</span></div>
+      <div class="info-row" style="margin-top:8px"><b>ROI nuevo:</b><br><span id="newRoi">—</span></div>
+      <div class="info-row"><b>Tamaño nuevo:</b> <span id="newSize">—</span></div>
+    </div>
+    <div class="log" id="logBox">Selecciona cámara y haz click en "Cargar imagen".</div>
+  </aside>
+  <main>
+    <div class="toolbar">
+      <div class="title" id="toolTitle">—</div>
+      <button id="zoomOutBtn">−</button>
+      <button id="fitBtn">Fit</button>
+      <button id="zoomInBtn">+</button>
+    </div>
+    <div class="stage" id="stage">
+      <div class="canvas-wrap" id="wrap">
+        <img id="image" alt="" />
+        <canvas id="overlay"></canvas>
+      </div>
+    </div>
+    <div class="footer">
+      <span id="statusSpan">listo</span>
+      <span><span class="kbd">drag</span> dibujar rect</span>
+      <span><span class="kbd">drag interior</span> mover</span>
+      <span><span class="kbd">drag esquina</span> redimensionar</span>
+      <span><span class="kbd">wheel</span> zoom</span>
+      <span><span class="kbd">Space+drag</span> pan</span>
+      <span><span class="kbd">Ctrl+S</span> guardar</span>
+    </div>
+  </main>
+</div>
+<script>
+const S = {
+  zoom:1, panX:18, panY:18,
+  imgW:0, imgH:0,
+  viewRect: null,   // [min_x, min_y, max_x, max_y] homography offset
+  curRect: null,    // [x0,y0,x1,y1] homo space — current dst_rect_override
+  newRect: null,    // {x,y,w,h} pixel space — user selection
+  drawing: null,    // {sx,sy,ex,ey}
+  dragging: null,   // {mode,handle,sx,sy,orig}
+  panning: null,
+  spaceDown: false,
+  camera: 'cam151',
+};
+
+const E = {
+  camSel: document.getElementById('camSel'),
+  loadBtn: document.getElementById('loadBtn'),
+  saveBtn: document.getElementById('saveBtn'),
+  resetBtn: document.getElementById('resetBtn'),
+  image: document.getElementById('image'),
+  overlay: document.getElementById('overlay'),
+  wrap: document.getElementById('wrap'),
+  stage: document.getElementById('stage'),
+  toolTitle: document.getElementById('toolTitle'),
+  curRoi: document.getElementById('curRoi'),
+  newRoi: document.getElementById('newRoi'),
+  newSize: document.getElementById('newSize'),
+  logBox: document.getElementById('logBox'),
+  statusSpan: document.getElementById('statusSpan'),
+  zoomInBtn: document.getElementById('zoomInBtn'),
+  zoomOutBtn: document.getElementById('zoomOutBtn'),
+  fitBtn: document.getElementById('fitBtn'),
+};
+const ctx = E.overlay.getContext('2d');
+
+function log(msg) { E.logBox.textContent = msg; }
+function status(msg) { E.statusSpan.textContent = msg; }
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (!r.ok) throw new Error(await r.text() || r.statusText);
+  return r.json();
+}
+
+function applyZoom() {
+  E.wrap.style.transform = `translate(${S.panX}px,${S.panY}px) scale(${S.zoom})`;
+  status(`zoom ${(S.zoom*100).toFixed(0)}%`);
+}
+
+function fitZoom() {
+  if (!S.imgW) return;
+  const pad = 40;
+  const zw = (E.stage.clientWidth - pad) / S.imgW;
+  const zh = (E.stage.clientHeight - pad) / S.imgH;
+  S.zoom = Math.max(0.05, Math.min(1.5, zw, zh));
+  S.panX = Math.max(18, (E.stage.clientWidth - S.imgW * S.zoom) / 2);
+  S.panY = Math.max(18, (E.stage.clientHeight - S.imgH * S.zoom) / 2);
+  applyZoom();
+}
+
+function zoomAt(cx, cy, f) {
+  const r = E.stage.getBoundingClientRect();
+  const lx = cx - r.left, ly = cy - r.top;
+  const ix = (lx - S.panX) / S.zoom, iy = (ly - S.panY) / S.zoom;
+  S.zoom = Math.max(0.05, Math.min(8, S.zoom * f));
+  S.panX = lx - ix * S.zoom; S.panY = ly - iy * S.zoom;
+  applyZoom();
+}
+
+function canvasPt(evt) {
+  const r = E.stage.getBoundingClientRect();
+  return {
+    x: Math.max(0, Math.min(S.imgW, (evt.clientX - r.left - S.panX) / S.zoom)),
+    y: Math.max(0, Math.min(S.imgH, (evt.clientY - r.top  - S.panY) / S.zoom)),
+  };
+}
+
+// pixel → homography space
+function p2h(px, py) {
+  return S.viewRect ? [S.viewRect[0]+px, S.viewRect[1]+py] : [px, py];
+}
+
+// homography → pixel space
+function h2p(hx, hy) {
+  return S.viewRect ? [hx-S.viewRect[0], hy-S.viewRect[1]] : [hx, hy];
+}
+
+function curRectPx() {
+  if (!S.curRect || !S.viewRect) return null;
+  const [px0, py0] = h2p(S.curRect[0], S.curRect[1]);
+  const [px1, py1] = h2p(S.curRect[2], S.curRect[3]);
+  return {x:px0, y:py0, w:px1-px0, h:py1-py0};
+}
+
+function normDraw() {
+  if (!S.drawing) return null;
+  const {sx,sy,ex,ey} = S.drawing;
+  return {x:Math.min(sx,ex), y:Math.min(sy,ey), w:Math.abs(ex-sx), h:Math.abs(ey-sy)};
+}
+
+// 8 handles: NW N NE E SE S SW W
+const HDIRS = ['nw','n','ne','e','se','s','sw','w'];
+function handles(r) {
+  const cx=r.x+r.w/2, cy=r.y+r.h/2;
+  return [{x:r.x,y:r.y},{x:cx,y:r.y},{x:r.x+r.w,y:r.y},{x:r.x+r.w,y:cy},
+          {x:r.x+r.w,y:r.y+r.h},{x:cx,y:r.y+r.h},{x:r.x,y:r.y+r.h},{x:r.x,y:cy}];
+}
+const HCURSOR = ['nw-resize','n-resize','ne-resize','e-resize','se-resize','s-resize','sw-resize','w-resize'];
+
+function hitHandle(pt, r) {
+  const hr = Math.max(5, 7/S.zoom);
+  const hs = handles(r);
+  for (let i=0;i<hs.length;i++) {
+    const dx=pt.x-hs[i].x, dy=pt.y-hs[i].y;
+    if (dx*dx+dy*dy < hr*hr) return i;
+  }
+  return -1;
+}
+
+function hitInside(pt, r) {
+  return pt.x>r.x && pt.x<r.x+r.w && pt.y>r.y && pt.y<r.y+r.h;
+}
+
+function applyHandle(orig, hi, dx, dy) {
+  let {x,y,w,h} = orig;
+  const d = HDIRS[hi];
+  if (d.includes('w')) { x+=dx; w-=dx; }
+  if (d.includes('e')) { w+=dx; }
+  if (d.includes('n')) { y+=dy; h-=dy; }
+  if (d.includes('s')) { h+=dy; }
+  if (w<0) { x+=w; w=-w; }
+  if (h<0) { y+=h; h=-h; }
+  x=Math.max(0,x); y=Math.max(0,y);
+  w=Math.min(S.imgW-x,w); h=Math.min(S.imgH-y,h);
+  return {x,y,w,h};
+}
+
+function updateInfoPanel(nr) {
+  if (!nr) { E.newRoi.textContent='—'; E.newSize.textContent='—'; E.saveBtn.disabled=true; return; }
+  const [hx0,hy0]=p2h(nr.x,nr.y), [hx1,hy1]=p2h(nr.x+nr.w,nr.y+nr.h);
+  E.newRoi.textContent=`[${hx0.toFixed(1)}, ${hy0.toFixed(1)}, ${hx1.toFixed(1)}, ${hy1.toFixed(1)}]`;
+  E.newSize.textContent=`${Math.round(nr.w)} × ${Math.round(nr.h)} px`;
+  E.saveBtn.disabled=false;
+}
+
+function draw() {
+  ctx.clearRect(0,0,E.overlay.width,E.overlay.height);
+
+  // Current ROI — yellow dashed
+  const cur = curRectPx();
+  if (cur) {
+    ctx.save();
+    ctx.strokeStyle='rgba(255,212,59,0.55)'; ctx.lineWidth=2; ctx.setLineDash([8,5]);
+    ctx.fillStyle='rgba(255,212,59,0.07)';
+    ctx.fillRect(cur.x,cur.y,cur.w,cur.h);
+    ctx.strokeRect(cur.x,cur.y,cur.w,cur.h);
+    ctx.restore();
+  }
+
+  // New rect — green solid
+  const nr = S.newRect || normDraw();
+  if (nr) {
+    ctx.save();
+    ctx.strokeStyle='#32d583'; ctx.lineWidth=2.5; ctx.setLineDash([]);
+    ctx.fillStyle='rgba(50,213,131,0.12)';
+    ctx.fillRect(nr.x,nr.y,nr.w,nr.h);
+    ctx.strokeRect(nr.x,nr.y,nr.w,nr.h);
+    if (S.newRect) {
+      const hs=handles(nr);
+      const hr=Math.max(4,6/S.zoom);
+      ctx.fillStyle='#32d583'; ctx.strokeStyle='#101214'; ctx.lineWidth=1.5;
+      hs.forEach(h => { ctx.beginPath(); ctx.arc(h.x,h.y,hr,0,Math.PI*2); ctx.fill(); ctx.stroke(); });
+    }
+    ctx.restore();
+    updateInfoPanel(nr);
+  } else {
+    updateInfoPanel(null);
+  }
+}
+
+async function load() {
+  S.camera = E.camSel.value;
+  log('Cargando…');
+  try {
+    const info = await api(`/api/roi-info?camera=${S.camera}`);
+    if (info.error) throw new Error(info.error);
+    S.viewRect = info.view_rect;
+    S.curRect  = info.dst_rect;
+    S.newRect  = null; S.drawing = null;
+
+    if (S.curRect) {
+      const [x0,y0,x1,y1]=S.curRect;
+      E.curRoi.textContent=`[${x0.toFixed(1)}, ${y0.toFixed(1)}, ${x1.toFixed(1)}, ${y1.toFixed(1)}]`;
+    }
+    updateInfoPanel(null);
+
+    E.image.onload = () => {
+      S.imgW=E.image.naturalWidth; S.imgH=E.image.naturalHeight;
+      E.overlay.width=S.imgW; E.overlay.height=S.imgH;
+      E.wrap.style.width=S.imgW+'px'; E.wrap.style.height=S.imgH+'px';
+      E.image.style.width=S.imgW+'px'; E.image.style.height=S.imgH+'px';
+      E.overlay.style.width=S.imgW+'px'; E.overlay.style.height=S.imgH+'px';
+      fitZoom(); draw();
+      const src = info.source_type === 'raw' ? 'warp completo de imagen raw' : 'imagen de anotación (sin imagen raw configurada)';
+      E.toolTitle.textContent=`${S.camera} — ${S.imgW}×${S.imgH}px`;
+      log(`Cargado: ${src}.\nDibuja un rectángulo verde para definir el nuevo ROI.\nEl contorno amarillo es el ROI actual.`);
+    };
+    E.image.src=`/roi-warp-image?camera=${S.camera}&t=${Date.now()}`;
+  } catch(e) { log('Error: '+e.message); }
+}
+
+async function save() {
+  const nr=S.newRect; if (!nr) return;
+  const [hx0,hy0]=p2h(nr.x,nr.y), [hx1,hy1]=p2h(nr.x+nr.w,nr.y+nr.h);
+  try {
+    await api('/api/roi-save',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({camera:S.camera,dst_rect:[hx0,hy0,hx1,hy1]})});
+    S.curRect=[hx0,hy0,hx1,hy1];
+    E.curRoi.textContent=`[${hx0.toFixed(1)}, ${hy0.toFixed(1)}, ${hx1.toFixed(1)}, ${hy1.toFixed(1)}]`;
+    S.newRect=null; draw();
+    log(`✓ Guardado en TOML.\nNuevo dst_rect_override = [${hx0.toFixed(3)}, ${hy0.toFixed(3)}, ${hx1.toFixed(3)}, ${hy1.toFixed(3)}]`);
+  } catch(e) { log('Error al guardar: '+e.message); }
+}
+
+// ── Mouse events ──────────────────────────────────────────────────────────────
+E.overlay.addEventListener('mousedown', evt => {
+  if (evt.button===1||evt.button===2||S.spaceDown) {
+    S.panning={x:evt.clientX,y:evt.clientY,px:S.panX,py:S.panY};
+    E.overlay.style.cursor='grabbing'; evt.preventDefault(); return;
+  }
+  if (evt.button!==0) return;
+  const pt=canvasPt(evt);
+  if (S.newRect) {
+    const hi=hitHandle(pt,S.newRect);
+    if (hi>=0) { S.dragging={mode:'handle',handle:hi,sx:pt.x,sy:pt.y,orig:{...S.newRect}}; return; }
+    if (hitInside(pt,S.newRect)) { S.dragging={mode:'move',sx:pt.x,sy:pt.y,orig:{...S.newRect}}; E.overlay.style.cursor='move'; return; }
+  }
+  S.drawing={sx:pt.x,sy:pt.y,ex:pt.x,ey:pt.y}; S.newRect=null; draw();
+});
+
+E.stage.addEventListener('mousedown', evt => {
+  if (evt.button===1||S.spaceDown) {
+    S.panning={x:evt.clientX,y:evt.clientY,px:S.panX,py:S.panY};
+    E.stage.style.cursor='grabbing'; evt.preventDefault();
+  }
+});
+
+window.addEventListener('mousemove', evt => {
+  if (S.panning) {
+    S.panX=S.panning.px+(evt.clientX-S.panning.x);
+    S.panY=S.panning.py+(evt.clientY-S.panning.y);
+    applyZoom(); return;
+  }
+  if (S.dragging) {
+    const pt=canvasPt(evt);
+    const dx=pt.x-S.dragging.sx, dy=pt.y-S.dragging.sy;
+    const o=S.dragging.orig;
+    S.newRect = S.dragging.mode==='move'
+      ? {x:Math.max(0,Math.min(S.imgW-o.w,o.x+dx)),y:Math.max(0,Math.min(S.imgH-o.h,o.y+dy)),w:o.w,h:o.h}
+      : applyHandle(o,S.dragging.handle,dx,dy);
+    draw(); return;
+  }
+  if (S.drawing) { const pt=canvasPt(evt); S.drawing.ex=pt.x; S.drawing.ey=pt.y; draw(); return; }
+  // cursor hints
+  if (S.newRect && !S.spaceDown) {
+    const pt=canvasPt(evt);
+    const hi=hitHandle(pt,S.newRect);
+    if (hi>=0) { E.overlay.style.cursor=HCURSOR[hi]; return; }
+    if (hitInside(pt,S.newRect)) { E.overlay.style.cursor='move'; return; }
+  }
+  if (!S.panning) E.overlay.style.cursor=S.spaceDown?'grab':'crosshair';
+});
+
+window.addEventListener('mouseup', () => {
+  if (S.panning) { S.panning=null; E.overlay.style.cursor='crosshair'; E.stage.style.cursor='default'; return; }
+  if (S.dragging) { S.dragging=null; E.overlay.style.cursor='crosshair'; return; }
+  if (S.drawing) {
+    const nr=normDraw(); S.drawing=null;
+    if (nr&&nr.w>=5&&nr.h>=5) S.newRect=nr;
+    draw();
+  }
+});
+
+E.overlay.addEventListener('contextmenu', e=>e.preventDefault());
+E.overlay.addEventListener('auxclick', e=>{if(e.button===1)e.preventDefault();});
+E.stage.addEventListener('contextmenu', e=>e.preventDefault());
+E.stage.addEventListener('wheel', evt=>{
+  evt.preventDefault();
+  zoomAt(evt.clientX,evt.clientY,evt.deltaY<0?1.12:1/1.12);
+},{passive:false});
+
+window.addEventListener('keydown', evt=>{
+  const typing=['input','select','textarea'].includes(document.activeElement?.tagName?.toLowerCase());
+  if (evt.code==='Space'&&!typing) { evt.preventDefault(); S.spaceDown=true; E.overlay.style.cursor='grab'; }
+  if (evt.ctrlKey&&evt.key==='s') { evt.preventDefault(); save(); }
+  if (evt.key==='Escape') { S.newRect=null; S.drawing=null; draw(); }
+});
+window.addEventListener('keyup', evt=>{
+  if (evt.code==='Space') { S.spaceDown=false; if(!S.panning) E.overlay.style.cursor='crosshair'; }
+});
+
+E.loadBtn.onclick=load;
+E.saveBtn.onclick=save;
+E.resetBtn.onclick=()=>{ S.newRect=null; S.drawing=null; draw(); };
+E.zoomInBtn.onclick=()=>{ const r=E.stage.getBoundingClientRect(); zoomAt(r.left+r.width/2,r.top+r.height/2,1.2); };
+E.zoomOutBtn.onclick=()=>{ const r=E.stage.getBoundingClientRect(); zoomAt(r.left+r.width/2,r.top+r.height/2,1/1.2); };
+E.fitBtn.onclick=fitZoom;
+
+load();
+</script>
+</body>
+</html>
+"""
+
+
+HTML = r"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pipe End Annotator</title>
+  <style>
+    :root {
+      --bg: #101214;
+      --panel: #1a1d21;
+      --panel2: #22262c;
+      --line: #343a43;
+      --text: #f2f1eb;
+      --muted: #a8afba;
+      --accent: #ffd43b;
+      --accent2: #32d583;
+      --danger: #ff5c5c;
+      --blue: #73c0ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at top left, #26313a 0, var(--bg) 38%);
+      color: var(--text);
+      font-family: "Segoe UI", Tahoma, sans-serif;
+      overflow: hidden;
+    }
+    .app {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      height: 100vh;
+    }
+    aside {
+      background: linear-gradient(180deg, var(--panel), #111315);
+      border-right: 1px solid var(--line);
+      min-width: 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    header {
+      padding: 16px;
+      border-bottom: 1px solid var(--line);
+      flex: 0 0 auto;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 20px;
+      line-height: 1.1;
+    }
+    .small { color: var(--muted); font-size: 12px; line-height: 1.35; }
+    .controls {
+      display: grid;
+      gap: 8px;
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255,255,255,0.02);
+      flex: 0 0 auto;
+    }
+    select, input, button {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel2);
+      color: var(--text);
+      padding: 9px 10px;
+      font-size: 14px;
+    }
+    button {
+      cursor: pointer;
+      font-weight: 650;
+    }
+    button:hover { border-color: var(--accent); }
+    .primary { background: #5b4405; border-color: #8d6b0f; color: #fff7d1; }
+    .danger { background: #461719; border-color: #8a2d31; color: #ffdede; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .list {
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 8px;
+      flex: 1;
+      min-height: 0;
+      scrollbar-gutter: stable;
+      overscroll-behavior: contain;
+    }
+    .item {
+      border: 1px solid transparent;
+      border-radius: 10px;
+      padding: 8px 10px;
+      margin-bottom: 5px;
+      cursor: pointer;
+      color: var(--muted);
+      background: rgba(255,255,255,0.025);
+      font-size: 12px;
+    }
+    .item:hover { border-color: #4d5663; }
+    .item.active {
+      border-color: var(--accent);
+      background: rgba(255, 212, 59, 0.12);
+      color: var(--text);
+    }
+    .item.done .badge { background: rgba(50,213,131,0.16); color: #a7f3c7; }
+    .item.bad {
+      border-color: rgba(255, 92, 92, 0.45);
+      background: rgba(255, 92, 92, 0.10);
+    }
+    .item.bad .badge { background: rgba(255,92,92,0.18); color: #ffdede; }
+    .item-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .badge {
+      display: inline-block;
+      margin-top: 5px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.08);
+      color: var(--muted);
+      font-size: 11px;
+    }
+    main {
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      min-width: 0;
+      min-height: 0;
+    }
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(0,0,0,0.18);
+      min-width: 0;
+    }
+    .toolbar .title {
+      font-weight: 700;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 1;
+    }
+    .stage {
+      min-height: 0;
+      overflow: hidden;
+      display: block;
+      padding: 18px;
+      position: relative;
+      touch-action: none;
+    }
+    .canvas-wrap {
+      position: absolute;
+      left: 0;
+      top: 0;
+      box-shadow: 0 18px 60px rgba(0,0,0,0.5);
+      background: #060708;
+      line-height: 0;
+      transform-origin: top left;
+      margin: 0;
+      will-change: transform;
+    }
+    #image {
+      display: block;
+      user-select: none;
+      pointer-events: none;
+      max-width: none;
+    }
+    #overlay {
+      position: absolute;
+      inset: 0;
+      cursor: crosshair;
+    }
+    .footer {
+      display: flex;
+      gap: 14px;
+      align-items: center;
+      padding: 9px 12px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+      background: rgba(0,0,0,0.25);
+    }
+    .kbd {
+      border: 1px solid var(--line);
+      border-bottom-width: 2px;
+      border-radius: 5px;
+      padding: 1px 5px;
+      color: var(--text);
+      background: var(--panel2);
+      font-size: 11px;
+    }
+    .dirty { color: var(--accent); font-weight: 700; }
+    @media (max-width: 900px) {
+      .app { grid-template-columns: 1fr; grid-template-rows: 260px 1fr; }
+      aside { border-right: none; border-bottom: 1px solid var(--line); }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside>
+      <header>
+        <h1>Pipe End Annotator</h1>
+        <div class="small">Draw tight boxes around visible <b>pipe_end</b> lines. Class is always <b>0 pipe_end</b>.</div>
+      </header>
+      <div class="controls">
+        <div class="row">
+          <select id="cameraFilter">
+            <option value="all">all cameras</option>
+            <option value="cam151">cam151</option>
+            <option value="cam152">cam152</option>
+          </select>
+          <select id="statusFilter">
+            <option value="all">all</option>
+            <option value="todo">todo</option>
+            <option value="done">done</option>
+            <option value="bad">bad warp</option>
+            <option value="usable">usable only</option>
+          </select>
+        </div>
+        <input id="search" placeholder="search timestamp..." />
+        <div class="row">
+          <button id="prevBtn">Prev</button>
+          <button id="nextBtn">Next</button>
+        </div>
+        <div class="row">
+          <button class="primary" id="saveBtn">Save</button>
+          <button class="danger" id="deleteBtn">Delete box</button>
+        </div>
+        <div class="row">
+          <button id="loadPredBtn">Load AI boxes</button>
+          <button id="trainBtn">Train AI</button>
+          <button id="generatePredBtn">Generate predictions</button>
+          <button class="danger" id="badWarpBtn">Bad warp</button>
+        </div>
+      </div>
+      <div class="list" id="imageList"></div>
+    </aside>
+    <main>
+      <div class="toolbar">
+        <div class="title" id="title">Loading...</div>
+        <button id="zoomOutBtn">-</button>
+        <button id="fitBtn">Fit</button>
+        <button id="zoomInBtn">+</button>
+        <button id="modeBtn">Mode: Draw</button>
+        <button id="clearBtn" class="danger">Clear</button>
+      </div>
+      <div class="stage" id="stage">
+        <div class="canvas-wrap" id="wrap">
+          <img id="image" alt="" />
+          <canvas id="overlay"></canvas>
+        </div>
+      </div>
+      <div class="footer">
+        <span id="status">ready</span>
+        <span id="trainStatus">AI idle</span>
+        <span><span class="kbd">drag</span> draw box</span>
+        <span><span class="kbd">wheel</span> zoom</span>
+        <span><span class="kbd">middle/right drag</span> pan</span>
+        <span><span class="kbd">Space+drag</span> pan</span>
+        <span><span class="kbd">click</span> select</span>
+        <span><span class="kbd">Del</span> delete</span>
+        <span><span class="kbd">Ctrl+S</span> save</span>
+        <span><span class="kbd">←/→</span> prev/next</span>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const state = {
+      images: [],
+      filtered: [],
+      currentIndex: 0,
+      boxes: [],
+      selected: -1,
+      drawing: null,
+      panning: null,
+      spaceDown: false,
+      mode: 'draw',
+      dirty: false,
+      zoom: 1,
+      panX: 18,
+      panY: 18,
+      imageNatural: {w: 0, h: 0}
+    };
+
+    const els = {
+      cameraFilter: document.getElementById('cameraFilter'),
+      statusFilter: document.getElementById('statusFilter'),
+      search: document.getElementById('search'),
+      imageList: document.getElementById('imageList'),
+      title: document.getElementById('title'),
+      image: document.getElementById('image'),
+      overlay: document.getElementById('overlay'),
+      wrap: document.getElementById('wrap'),
+      stage: document.getElementById('stage'),
+      status: document.getElementById('status'),
+      saveBtn: document.getElementById('saveBtn'),
+      deleteBtn: document.getElementById('deleteBtn'),
+      loadPredBtn: document.getElementById('loadPredBtn'),
+      trainBtn: document.getElementById('trainBtn'),
+      generatePredBtn: document.getElementById('generatePredBtn'),
+      badWarpBtn: document.getElementById('badWarpBtn'),
+      clearBtn: document.getElementById('clearBtn'),
+      prevBtn: document.getElementById('prevBtn'),
+      nextBtn: document.getElementById('nextBtn'),
+      zoomInBtn: document.getElementById('zoomInBtn'),
+      zoomOutBtn: document.getElementById('zoomOutBtn'),
+      fitBtn: document.getElementById('fitBtn'),
+      modeBtn: document.getElementById('modeBtn'),
+      trainStatus: document.getElementById('trainStatus')
+    };
+    const ctx = els.overlay.getContext('2d');
+
+    function setStatus(text) {
+      els.status.innerHTML = state.dirty ? `<span class="dirty">unsaved</span> - ${text}` : text;
+    }
+
+    function setMode(mode) {
+      state.mode = mode === 'pan' ? 'pan' : 'draw';
+      if (els.modeBtn) {
+        els.modeBtn.textContent = state.mode === 'pan' ? 'Mode: Pan' : 'Mode: Draw';
+        els.modeBtn.classList.toggle('primary', state.mode === 'pan');
+      }
+      els.overlay.style.cursor = state.mode === 'pan' ? 'grab' : 'crosshair';
+      setStatus(`${state.mode} mode, zoom ${(state.zoom * 100).toFixed(0)}%, ${state.boxes.length} boxes`);
+    }
+
+    async function api(path, options) {
+      const res = await fetch(path, options);
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || res.statusText);
+      }
+      return await res.json();
+    }
+
+    function currentItem() {
+      return state.filtered[state.currentIndex];
+    }
+
+    function applyFilters() {
+      const cam = els.cameraFilter.value;
+      const status = els.statusFilter.value;
+      const q = els.search.value.trim().toLowerCase();
+      state.filtered = state.images.filter(item => {
+        if (cam !== 'all' && item.camera !== cam) return false;
+        if (status === 'todo' && item.labeled) return false;
+        if (status === 'done' && !item.labeled) return false;
+        if (status === 'bad' && !item.bad_warp) return false;
+        if (status === 'usable' && item.bad_warp) return false;
+        if (q && !item.rel.toLowerCase().includes(q)) return false;
+        return true;
+      });
+      if (state.currentIndex >= state.filtered.length) state.currentIndex = Math.max(0, state.filtered.length - 1);
+      renderList();
+    }
+
+    function renderList() {
+      els.imageList.innerHTML = '';
+      state.filtered.forEach((item, idx) => {
+        const div = document.createElement('div');
+        div.className = `item ${idx === state.currentIndex ? 'active' : ''} ${item.labeled ? 'done' : ''} ${item.bad_warp ? 'bad' : ''}`;
+        const badges = [
+          `${item.box_count} boxes`,
+          item.has_predictions ? `${item.prediction_count} AI` : null,
+          item.bad_warp ? 'BAD WARP' : null
+        ].filter(Boolean).map(text => `<span class="badge">${text}</span>`).join(' ');
+        div.innerHTML = `<div class="item-title">${item.rel}</div>${badges}`;
+        div.onclick = () => goTo(idx);
+        els.imageList.appendChild(div);
+      });
+    }
+
+    async function refreshImages(keepRel=null) {
+      const data = await api('/api/images');
+      state.images = data.images;
+      applyFilters();
+      if (keepRel) {
+        const idx = state.filtered.findIndex(item => item.rel === keepRel);
+        if (idx >= 0) state.currentIndex = idx;
+      }
+      renderList();
+    }
+
+    async function goTo(idx) {
+      if (!state.filtered.length) {
+        els.title.textContent = 'No images';
+        return;
+      }
+      if (state.dirty) {
+        const ok = confirm('You have unsaved boxes. Continue without saving?');
+        if (!ok) return;
+      }
+      state.currentIndex = Math.max(0, Math.min(idx, state.filtered.length - 1));
+      state.selected = -1;
+      state.drawing = null;
+      state.dirty = false;
+      await loadCurrent();
+      renderList();
+    }
+
+    async function loadCurrent() {
+      const item = currentItem();
+      if (!item) return;
+      els.title.textContent = `${item.bad_warp ? '[BAD WARP] ' : ''}${item.rel} (${item.width}x${item.height})`;
+      state.imageNatural = {w: item.width, h: item.height};
+      els.image.onload = async () => {
+        els.image.width = item.width;
+        els.image.height = item.height;
+        els.overlay.width = item.width;
+        els.overlay.height = item.height;
+        els.wrap.style.width = `${item.width}px`;
+        els.wrap.style.height = `${item.height}px`;
+        fitZoom();
+        draw();
+      };
+      els.image.src = item.url + '&t=' + Date.now();
+      const labels = await api('/api/labels?path=' + encodeURIComponent(item.rel));
+      state.boxes = labels.boxes || [];
+      setStatus(`loaded ${state.boxes.length} boxes`);
+      draw();
+    }
+
+    function fitZoom() {
+      const item = currentItem();
+      if (!item) return;
+      const pad = 46;
+      const zw = (els.stage.clientWidth - pad) / item.width;
+      const zh = (els.stage.clientHeight - pad) / item.height;
+      state.zoom = Math.max(0.1, Math.min(1.6, zw, zh));
+      state.panX = Math.round(Math.max(18, (els.stage.clientWidth - item.width * state.zoom) / 2));
+      state.panY = Math.round(Math.max(18, (els.stage.clientHeight - item.height * state.zoom) / 2));
+      applyZoom();
+    }
+
+    function applyZoom() {
+      const item = currentItem();
+      if (item) {
+        els.wrap.style.width = `${item.width}px`;
+        els.wrap.style.height = `${item.height}px`;
+        els.image.style.width = `${item.width}px`;
+        els.image.style.height = `${item.height}px`;
+        els.overlay.style.width = `${item.width}px`;
+        els.overlay.style.height = `${item.height}px`;
+        els.wrap.style.transform = `translate(${state.panX}px, ${state.panY}px) scale(${state.zoom})`;
+      }
+      setStatus(`zoom ${(state.zoom * 100).toFixed(0)}%, ${state.boxes.length} boxes`);
+    }
+
+    function canvasPoint(evt) {
+      const rect = els.stage.getBoundingClientRect();
+      const x = (evt.clientX - rect.left - state.panX) / Math.max(0.001, state.zoom);
+      const y = (evt.clientY - rect.top - state.panY) / Math.max(0.001, state.zoom);
+      return {
+        x: Math.max(0, Math.min(state.imageNatural.w, x)),
+        y: Math.max(0, Math.min(state.imageNatural.h, y))
+      };
+    }
+
+    function zoomAt(clientX, clientY, factor) {
+      const rect = els.stage.getBoundingClientRect();
+      const localX = clientX - rect.left;
+      const localY = clientY - rect.top;
+      const imageX = (localX - state.panX) / Math.max(0.001, state.zoom);
+      const imageY = (localY - state.panY) / Math.max(0.001, state.zoom);
+      const oldZoom = state.zoom;
+      state.zoom = Math.max(0.1, Math.min(6, state.zoom * factor));
+      if (Math.abs(state.zoom - oldZoom) < 1e-6) return;
+      state.panX = localX - imageX * state.zoom;
+      state.panY = localY - imageY * state.zoom;
+      applyZoom();
+    }
+
+    function normBox(a, b) {
+      const x = Math.min(a.x, b.x);
+      const y = Math.min(a.y, b.y);
+      const w = Math.abs(a.x - b.x);
+      const h = Math.abs(a.y - b.y);
+      return {class_id: 0, x, y, w, h};
+    }
+
+    function hitTest(point) {
+      for (let i = state.boxes.length - 1; i >= 0; i--) {
+        const b = state.boxes[i];
+        if (point.x >= b.x && point.x <= b.x + b.w && point.y >= b.y && point.y <= b.y + b.h) return i;
+      }
+      return -1;
+    }
+
+    function drawBox(box, idx, selected=false) {
+      ctx.save();
+      ctx.strokeStyle = selected ? '#32d583' : '#ffd43b';
+      ctx.lineWidth = selected ? 3 : 2;
+      ctx.fillStyle = selected ? 'rgba(50,213,131,0.12)' : 'rgba(255,212,59,0.08)';
+      ctx.fillRect(box.x, box.y, box.w, box.h);
+      ctx.strokeRect(box.x, box.y, box.w, box.h);
+      ctx.fillStyle = selected ? '#32d583' : '#ffd43b';
+      ctx.font = '16px Segoe UI';
+      ctx.fillText(String(idx + 1), box.x + 3, Math.max(16, box.y - 4));
+      ctx.restore();
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, els.overlay.width, els.overlay.height);
+      state.boxes.forEach((box, idx) => drawBox(box, idx, idx === state.selected));
+      if (state.drawing) {
+        const box = normBox(state.drawing.start, state.drawing.end);
+        drawBox(box, state.boxes.length, true);
+      }
+    }
+
+    function markDirty() {
+      state.dirty = true;
+      draw();
+      setStatus(`${state.boxes.length} boxes`);
+    }
+
+    async function save() {
+      const item = currentItem();
+      if (!item) return;
+      const result = await api('/api/labels', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          path: item.rel,
+          width: state.imageNatural.w,
+          height: state.imageNatural.h,
+          boxes: state.boxes
+        })
+      });
+      state.dirty = false;
+      await refreshImages(item.rel);
+      setStatus(`saved ${state.boxes.length} boxes`);
+      await refreshTrainStatus();
+    }
+
+    async function refreshTrainStatus() {
+      try {
+        const train = await api('/api/train-status');
+        const prefix = train.running ? 'AI training' : train.status === 'ready' ? 'AI ready' : `AI ${train.status}`;
+        els.trainStatus.textContent = `${prefix}: ${train.message}`;
+        if (els.trainBtn) {
+          els.trainBtn.disabled = !!train.running;
+          els.trainBtn.textContent = train.running ? 'AI busy' : 'Train AI';
+          els.trainBtn.classList.toggle('primary', train.status === 'training');
+        }
+        if (els.generatePredBtn) {
+          els.generatePredBtn.disabled = !!train.running;
+          els.generatePredBtn.textContent = train.running ? 'AI busy' : 'Generate predictions';
+          els.generatePredBtn.classList.toggle('primary', train.status === 'predicting');
+        }
+        return train;
+      } catch (err) {
+        els.trainStatus.textContent = `AI status error: ${err.message}`;
+        return null;
+      }
+    }
+
+    async function trainNow() {
+      try {
+        setStatus('requesting AI update...');
+        const result = await api('/api/train', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({reason: 'manual button'})
+        });
+        setStatus(result.scheduled ? 'AI training started' : `AI training not started: ${result.reason || 'unknown'}`);
+        await refreshTrainStatus();
+      } catch (err) {
+        setStatus(`AI train request failed: ${err.message}`);
+      }
+    }
+
+    async function generatePredictionsNow() {
+      try {
+        setStatus('requesting AI predictions...');
+        const result = await api('/api/generate-predictions', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({reason: 'manual button'})
+        });
+        setStatus(result.scheduled ? 'AI prediction generation started' : `AI predictions not started: ${result.reason || 'unknown'}`);
+        await refreshTrainStatus();
+      } catch (err) {
+        setStatus(`AI prediction request failed: ${err.message}`);
+      }
+    }
+
+    async function setBadWarp(flag) {
+      const item = currentItem();
+      if (!item) return;
+      await api('/api/status', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({path: item.rel, bad_warp: !!flag})
+      });
+      await refreshImages(item.rel);
+      await loadCurrent();
+      setStatus(flag ? 'marked as bad warp' : 'bad warp cleared');
+    }
+
+    async function loadPredictions() {
+      const item = currentItem();
+      if (!item) return;
+      if (state.dirty) {
+        const ok = confirm('Current boxes are unsaved. Replace them with AI predictions?');
+        if (!ok) return;
+      }
+      const payload = await api('/api/predictions?path=' + encodeURIComponent(item.rel));
+      state.boxes = payload.boxes || [];
+      state.selected = -1;
+      markDirty();
+      setStatus(`loaded ${state.boxes.length} AI boxes; review and save`);
+    }
+
+    function deleteSelected() {
+      if (state.selected < 0) return;
+      state.boxes.splice(state.selected, 1);
+      state.selected = -1;
+      markDirty();
+    }
+
+    function beginPan(evt) {
+      evt.preventDefault();
+      state.panning = {
+        x: evt.clientX,
+        y: evt.clientY,
+        panX: state.panX,
+        panY: state.panY
+      };
+      els.overlay.style.cursor = 'grabbing';
+      els.stage.style.cursor = 'grabbing';
+    }
+
+    function shouldPan(evt) {
+      return evt.button === 1 || evt.button === 2 || (evt.button === 0 && (state.spaceDown || state.mode === 'pan' || evt.shiftKey || evt.altKey));
+    }
+
+    els.stage.addEventListener('mousedown', evt => {
+      if (shouldPan(evt)) {
+        beginPan(evt);
+        return;
+      }
+    });
+
+    els.overlay.addEventListener('mousedown', evt => {
+      if (shouldPan(evt)) {
+        evt.preventDefault();
+        beginPan(evt);
+        return;
+      }
+      if (evt.button !== 0) return;
+      const p = canvasPoint(evt);
+      const hit = hitTest(p);
+      if (hit >= 0) {
+        state.selected = hit;
+        draw();
+        return;
+      }
+      state.selected = -1;
+      state.drawing = {start: p, end: p};
+      draw();
+    });
+
+    window.addEventListener('mousemove', evt => {
+      if (state.panning) {
+        evt.preventDefault();
+        state.panX = state.panning.panX + (evt.clientX - state.panning.x);
+        state.panY = state.panning.panY + (evt.clientY - state.panning.y);
+        applyZoom();
+        return;
+      }
+      if (!state.drawing) return;
+      state.drawing.end = canvasPoint(evt);
+      draw();
+    });
+
+    window.addEventListener('mouseup', () => {
+      if (state.panning) {
+        state.panning = null;
+        els.overlay.style.cursor = state.mode === 'pan' ? 'grab' : 'crosshair';
+        els.stage.style.cursor = 'default';
+        return;
+      }
+      if (!state.drawing) return;
+      const box = normBox(state.drawing.start, state.drawing.end);
+      state.drawing = null;
+      if (box.w >= 3 && box.h >= 3) {
+        state.boxes.push(box);
+        state.selected = state.boxes.length - 1;
+        markDirty();
+      } else {
+        draw();
+      }
+    });
+
+    els.overlay.addEventListener('auxclick', evt => {
+      if (evt.button === 1) evt.preventDefault();
+    });
+
+    els.stage.addEventListener('contextmenu', evt => {
+      if (state.panning || evt.target === els.overlay || evt.target === els.image) evt.preventDefault();
+    });
+
+    els.stage.addEventListener('wheel', evt => {
+      evt.preventDefault();
+      const factor = evt.deltaY < 0 ? 1.12 : 1 / 1.12;
+      zoomAt(evt.clientX, evt.clientY, factor);
+    }, { passive: false });
+
+    els.saveBtn.onclick = save;
+    els.deleteBtn.onclick = deleteSelected;
+    els.loadPredBtn.onclick = loadPredictions;
+    els.trainBtn.onclick = trainNow;
+    els.generatePredBtn.onclick = generatePredictionsNow;
+    els.badWarpBtn.onclick = async () => {
+      const item = currentItem();
+      if (!item) return;
+      await setBadWarp(!item.bad_warp);
+    };
+    els.clearBtn.onclick = () => {
+      if (state.boxes.length && confirm('Clear all boxes for this image?')) {
+        state.boxes = [];
+        state.selected = -1;
+        markDirty();
+      }
+    };
+    els.prevBtn.onclick = () => goTo(state.currentIndex - 1);
+    els.nextBtn.onclick = () => goTo(state.currentIndex + 1);
+    els.zoomInBtn.onclick = () => {
+      const rect = els.stage.getBoundingClientRect();
+      zoomAt(rect.left + rect.width / 2, rect.top + rect.height / 2, 1.2);
+    };
+    els.zoomOutBtn.onclick = () => {
+      const rect = els.stage.getBoundingClientRect();
+      zoomAt(rect.left + rect.width / 2, rect.top + rect.height / 2, 1 / 1.2);
+    };
+    els.fitBtn.onclick = fitZoom;
+    els.modeBtn.onclick = () => setMode(state.mode === 'pan' ? 'draw' : 'pan');
+
+    for (const el of [els.cameraFilter, els.statusFilter, els.search]) {
+      el.addEventListener('input', async () => {
+        const rel = currentItem()?.rel;
+        applyFilters();
+        if (rel) {
+          const idx = state.filtered.findIndex(item => item.rel === rel);
+          state.currentIndex = idx >= 0 ? idx : 0;
+        }
+        await loadCurrent();
+        renderList();
+      });
+    }
+
+    window.addEventListener('keydown', evt => {
+      const tag = document.activeElement?.tagName?.toLowerCase();
+      const typing = tag === 'input' || tag === 'select' || tag === 'textarea';
+      if (evt.code === 'Space' && !typing) {
+        evt.preventDefault();
+        state.spaceDown = true;
+        els.overlay.style.cursor = 'grab';
+        return;
+      } else if (evt.key.toLowerCase() === 'p' && !typing) {
+        evt.preventDefault();
+        setMode(state.mode === 'pan' ? 'draw' : 'pan');
+        return;
+      }
+      if (evt.ctrlKey && evt.key.toLowerCase() === 's') {
+        evt.preventDefault();
+        save();
+      } else if ((evt.key === 'Delete' || evt.key === 'Backspace' || evt.key === 'Del' || evt.code === 'Delete') && !typing) {
+        evt.preventDefault();
+        deleteSelected();
+      } else if (evt.key === 'ArrowRight' && !typing) {
+        goTo(state.currentIndex + 1);
+      } else if (evt.key === 'ArrowLeft' && !typing) {
+        goTo(state.currentIndex - 1);
+      } else if (evt.key === 'Escape' && !typing) {
+        state.drawing = null;
+        state.selected = -1;
+        draw();
+      }
+    });
+
+    window.addEventListener('keyup', evt => {
+      if (evt.code === 'Space') {
+        state.spaceDown = false;
+        if (!state.panning) els.overlay.style.cursor = state.mode === 'pan' ? 'grab' : 'crosshair';
+      }
+    });
+
+    async function boot() {
+      try {
+        await refreshImages();
+        await loadCurrent();
+        await refreshTrainStatus();
+        setInterval(refreshTrainStatus, 5000);
+      } catch (err) {
+        els.title.textContent = 'Error';
+        setStatus(err.message);
+        console.error(err);
+      }
+    }
+    setMode('draw');
+    boot();
+  </script>
+</body>
+</html>
+"""
+
+
+class AnnotatorHandler(BaseHTTPRequestHandler):
+    paths: AppPaths
+
+    def log_message(self, fmt: str, *args: object) -> None:
+        print(f"{self.address_string()} - {fmt % args}")
+
+    def send_json(self, payload: object, status: HTTPStatus = HTTPStatus.OK) -> None:
+        raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def send_text(self, text: str, status: HTTPStatus = HTTPStatus.OK, content_type: str = "text/plain; charset=utf-8") -> None:
+        raw = text.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def do_GET(self) -> None:
+        parsed = urlparse(self.path)
+        try:
+            if parsed.path in {"/", "/index.html"}:
+                self.send_text(HTML, content_type="text/html; charset=utf-8")
+                return
+            if parsed.path == "/api/images":
+                self.send_json({"images": build_image_items(self.paths)})
+                return
+            if parsed.path == "/api/labels":
+                query = parse_qs(parsed.query)
+                rel = normalize_rel(query.get("path", [""])[0])
+                image_path = self.paths.images_root / rel
+                if not image_path.exists():
+                    self.send_json({"error": "image not found"}, HTTPStatus.NOT_FOUND)
+                    return
+                width, height = image_size(image_path)
+                label_path = (self.paths.labels_root / rel).with_suffix(".txt")
+                self.send_json({"boxes": yolo_to_boxes(label_path, width, height), "width": width, "height": height})
+                return
+            if parsed.path == "/api/predictions":
+                query = parse_qs(parsed.query)
+                rel = normalize_rel(query.get("path", [""])[0])
+                image_path = self.paths.images_root / rel
+                if not image_path.exists():
+                    self.send_json({"error": "image not found"}, HTTPStatus.NOT_FOUND)
+                    return
+                width, height = image_size(image_path)
+                prediction_path = (self.paths.predictions_root / rel).with_suffix(".txt")
+                self.send_json(
+                    {
+                        "boxes": yolo_to_boxes(prediction_path, width, height),
+                        "width": width,
+                        "height": height,
+                        "prediction_path": prediction_path.relative_to(self.paths.root).as_posix()
+                        if prediction_path.exists()
+                        else None,
+                    }
+                )
+                return
+            if parsed.path == "/api/status":
+                query = parse_qs(parsed.query)
+                rel = normalize_rel(query.get("path", [""])[0])
+                status = load_status(self.paths.status_path)
+                self.send_json({"bad_warp": bool(status.get("bad_warp", {}).get(rel.as_posix(), False))})
+                return
+            if parsed.path == "/api/train-status":
+                self.send_json(TRAINING_STATE.snapshot())
+                return
+            if parsed.path == "/image":
+                query = parse_qs(parsed.query)
+                rel = normalize_rel(query.get("path", [""])[0])
+                image_path = self.paths.images_root / rel
+                if not image_path.exists() or image_path.suffix.lower() not in IMAGE_SUFFIXES:
+                    self.send_json({"error": "image not found"}, HTTPStatus.NOT_FOUND)
+                    return
+                ctype = mimetypes.guess_type(str(image_path))[0] or "application/octet-stream"
+                data = image_path.read_bytes()
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return
+            if parsed.path == "/roi-picker":
+                self.send_text(ROI_PICKER_HTML, content_type="text/html; charset=utf-8")
+                return
+            if parsed.path == "/api/roi-info":
+                query = parse_qs(parsed.query)
+                camera = query.get("camera", ["cam151"])[0]
+                toml_path = _roi_toml_for_camera(self.paths, camera)
+                if toml_path is None or not toml_path.exists():
+                    self.send_json({"error": "TOML no disponible. Usa --roi-toml-151 / --roi-toml-152."})
+                    return
+                try:
+                    roi = _read_roi_toml(toml_path)
+                    dst_rect = roi.get("dst_rect_override")
+                    src_pts = roi.get("src_points_override")
+                    raw_path = _raw_image_for_camera(self.paths, camera)
+                    if raw_path and raw_path.exists() and src_pts:
+                        _, view_rect, (w, h) = _build_full_warp_jpeg(raw_path, src_pts)
+                        source_type = "raw"
+                    else:
+                        cam_dir = self.paths.images_root / camera
+                        imgs = sorted(cam_dir.glob("*.jpg")) + sorted(cam_dir.glob("*.jpeg"))
+                        if not imgs:
+                            self.send_json({"error": "Sin imágenes de anotación para esta cámara."})
+                            return
+                        w, h = image_size(imgs[-1])
+                        view_rect = list(dst_rect) if dst_rect else [0.0, 0.0, float(w), float(h)]
+                        source_type = "annotation"
+                    self.send_json({"dst_rect": dst_rect, "view_rect": view_rect,
+                                    "image_w": w, "image_h": h, "source_type": source_type})
+                except Exception as exc:
+                    self.send_json({"error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+            if parsed.path == "/roi-warp-image":
+                query = parse_qs(parsed.query)
+                camera = query.get("camera", ["cam151"])[0]
+                try:
+                    toml_path = _roi_toml_for_camera(self.paths, camera)
+                    raw_path = _raw_image_for_camera(self.paths, camera)
+                    if toml_path and toml_path.exists() and raw_path and raw_path.exists():
+                        roi = _read_roi_toml(toml_path)
+                        src_pts = roi.get("src_points_override")
+                        if src_pts:
+                            jpeg_bytes, _, _ = _build_full_warp_jpeg(raw_path, src_pts)
+                            self.send_response(HTTPStatus.OK)
+                            self.send_header("Content-Type", "image/jpeg")
+                            self.send_header("Content-Length", str(len(jpeg_bytes)))
+                            self.end_headers()
+                            self.wfile.write(jpeg_bytes)
+                            return
+                    cam_dir = self.paths.images_root / camera
+                    imgs = sorted(cam_dir.glob("*.jpg")) + sorted(cam_dir.glob("*.jpeg"))
+                    if not imgs:
+                        self.send_json({"error": "Sin imágenes"}, HTTPStatus.NOT_FOUND)
+                        return
+                    data = imgs[-1].read_bytes()
+                    self.send_response(HTTPStatus.OK)
+                    self.send_header("Content-Type", "image/jpeg")
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                except Exception as exc:
+                    self.send_json({"error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+            self.send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+        except Exception as exc:
+            self.send_json({"error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def do_POST(self) -> None:
+        parsed = urlparse(self.path)
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            if parsed.path == "/api/status":
+                rel = normalize_rel(str(payload.get("path", "")))
+                image_path = self.paths.images_root / rel
+                if not image_path.exists():
+                    self.send_json({"error": "image not found"}, HTTPStatus.NOT_FOUND)
+                    return
+                status = load_status(self.paths.status_path)
+                bad_warp = status.setdefault("bad_warp", {})
+                rel_key = rel.as_posix()
+                if bool(payload.get("bad_warp", False)):
+                    bad_warp[rel_key] = True
+                else:
+                    bad_warp.pop(rel_key, None)
+                save_status(self.paths.status_path, status)
+                self.send_json({"ok": True, "path": rel_key, "bad_warp": bool(bad_warp.get(rel_key, False))})
+                return
+            if parsed.path == "/api/train":
+                reason = str(payload.get("reason", "manual request"))
+                self.send_json(schedule_training(self.paths, reason))
+                return
+            if parsed.path == "/api/generate-predictions":
+                reason = str(payload.get("reason", "manual request"))
+                self.send_json(schedule_prediction(self.paths, reason))
+                return
+            if parsed.path == "/api/roi-save":
+                camera = str(payload.get("camera", "cam151"))
+                dst_rect = payload.get("dst_rect", [])
+                toml_path = _roi_toml_for_camera(self.paths, camera)
+                if toml_path is None:
+                    self.send_json({"error": "TOML no configurado para esta cámara."}, HTTPStatus.BAD_REQUEST)
+                    return
+                if len(dst_rect) != 4:
+                    self.send_json({"error": "dst_rect debe tener 4 valores."}, HTTPStatus.BAD_REQUEST)
+                    return
+                _save_roi_dst_rect(toml_path, [float(v) for v in dst_rect])
+                self.send_json({"ok": True, "dst_rect": dst_rect, "toml": str(toml_path)})
+                return
+            if parsed.path != "/api/labels":
+                self.send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+                return
+            rel = normalize_rel(str(payload.get("path", "")))
+            image_path = self.paths.images_root / rel
+            if not image_path.exists():
+                self.send_json({"error": "image not found"}, HTTPStatus.NOT_FOUND)
+                return
+            width, height = image_size(image_path)
+            boxes = payload.get("boxes", [])
+            if not isinstance(boxes, list):
+                raise ValueError("boxes must be a list")
+            label_path = (self.paths.labels_root / rel).with_suffix(".txt")
+            label_path.parent.mkdir(parents=True, exist_ok=True)
+            label_path.write_text(boxes_to_yolo(boxes, width, height), encoding="utf-8")
+            self.send_json(
+                {
+                    "ok": True,
+                    "label_path": label_path.relative_to(self.paths.root).as_posix(),
+                    "count": len(boxes),
+                    "training": {"scheduled": False, "reason": "manual training only"},
+                }
+            )
+        except Exception as exc:
+            self.send_json({"error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+
+def find_free_port(preferred: int) -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        try:
+            sock.bind(("127.0.0.1", preferred))
+            return preferred
+        except OSError:
+            sock.bind(("127.0.0.1", 0))
+            return int(sock.getsockname()[1])
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Local YOLO box annotation app for pipe_end.")
+    parser.add_argument("--root", type=Path, default=PIPE_END_ROOT)
+    parser.add_argument("--images-root", type=Path, default=Path("annotation_pool/images"))
+    parser.add_argument("--labels-root", type=Path, default=Path("annotation_pool/labels"))
+    parser.add_argument("--predictions-root", type=Path, default=Path("predictions/current/labels"))
+    parser.add_argument("--status-path", type=Path, default=Path("annotation_pool/image_status.json"))
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument("--min-train-images", type=int, default=4)
+    parser.add_argument("--train-epochs", type=int, default=40)
+    parser.add_argument("--train-imgsz", type=int, default=1280)
+    parser.add_argument("--train-batch", type=int, default=1)
+    parser.add_argument("--base-model", default="yolo11n.pt")
+    parser.add_argument("--train-device", default="0", help="CUDA device index or 'cpu'. Default 0 (first GPU).")
+    parser.add_argument("--roi-toml-151", type=Path, default=None, help="Path to cam151 ROI TOML file.")
+    parser.add_argument("--roi-toml-152", type=Path, default=None, help="Path to cam152 ROI TOML file.")
+    parser.add_argument("--raw-image-151", type=Path, default=None, help="Raw camera image for cam151 full-warp preview.")
+    parser.add_argument("--raw-image-152", type=Path, default=None, help="Raw camera image for cam152 full-warp preview.")
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    root = args.root.resolve()
+    images_root = (root / args.images_root).resolve() if not args.images_root.is_absolute() else args.images_root.resolve()
+    labels_root = (root / args.labels_root).resolve() if not args.labels_root.is_absolute() else args.labels_root.resolve()
+    predictions_root = (
+        (root / args.predictions_root).resolve()
+        if not args.predictions_root.is_absolute()
+        else args.predictions_root.resolve()
+    )
+    status_path = (root / args.status_path).resolve() if not args.status_path.is_absolute() else args.status_path.resolve()
+    if not images_root.exists():
+        raise FileNotFoundError(images_root)
+    labels_root.mkdir(parents=True, exist_ok=True)
+    predictions_root.mkdir(parents=True, exist_ok=True)
+
+    port = find_free_port(args.port)
+    AnnotatorHandler.paths = AppPaths(
+        root=root,
+        images_root=images_root,
+        labels_root=labels_root,
+        predictions_root=predictions_root,
+        status_path=status_path,
+        auto_train=False,
+        min_train_images=args.min_train_images,
+        train_epochs=args.train_epochs,
+        train_imgsz=args.train_imgsz,
+        train_batch=args.train_batch,
+        base_model=args.base_model,
+        train_device=args.train_device,
+        roi_toml_151=args.roi_toml_151.resolve() if args.roi_toml_151 else None,
+        roi_toml_152=args.roi_toml_152.resolve() if args.roi_toml_152 else None,
+        raw_image_151=args.raw_image_151.resolve() if args.raw_image_151 else None,
+        raw_image_152=args.raw_image_152.resolve() if args.raw_image_152 else None,
+    )
+    server = ThreadingHTTPServer((args.host, port), AnnotatorHandler)
+    url = f"http://{args.host}:{port}/"
+    print(f"Pipe End Annotator running at {url}")
+    print(f"images: {images_root}")
+    print(f"labels: {labels_root}")
+    print(f"predictions: {predictions_root}")
+    print(f"status: {status_path}")
+    print(f"auto_train: False, min_images={args.min_train_images}, epochs={args.train_epochs}")
+    if not args.no_browser:
+        threading.Timer(0.6, lambda: webbrowser.open(url)).start()
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
+if __name__ == "__main__":
+    main()

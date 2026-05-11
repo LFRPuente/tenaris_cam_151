@@ -1777,8 +1777,6 @@ def _pick_cam152_tube_stack_range(gray_img: np.ndarray) -> tuple[int, int, int, 
 
     if stack_x1 <= stack_x0 + 24:
         stack_x0, stack_x1 = 0, gray_img.shape[1]
-    with open("debug.txt", "a") as _f:
-        _f.write(f"[pick_range] img={gray_img.shape} dark_thr={dark_thr} min_dark_run={min_dark_run} min_stack_y={min_stack_y} ranges={ranges} stack_y0={stack_y0} stack_y1={stack_y1}\n")
     return int(stack_y0), int(stack_y1), int(stack_x0), int(stack_x1), int(dark_thr), run_profile_smooth
 
 
@@ -1794,8 +1792,6 @@ def _needs_backend_mirror(image_path: str | Path) -> bool:
 
 
 def _detect_tubes_in_warp(warp_bgr: np.ndarray, *, cam152_mode: bool = False) -> tuple[np.ndarray, dict]:
-    with open("debug.txt", "a") as _f:
-        _f.write(f"cam152_mode={cam152_mode} shape={warp_bgr.shape if warp_bgr is not None else None}\n")
     if warp_bgr is None or warp_bgr.size == 0:
         raise RuntimeError("warp image is empty")
 
@@ -2507,8 +2503,6 @@ def build_tube_detection_preview(
                 int(max(detection_roi[3], band_y1)),
             )
 
-    with open("debug.txt", "a") as _f:
-        _f.write(f"detection_roi={detection_roi} cam152_mode={cam152_mode} warp_shape={warp_bgr.shape}\n")
     if detection_roi is None:
         overlay_bgr, summary = _detect_tubes_in_warp(warp_bgr, cam152_mode=cam152_mode)
     else:

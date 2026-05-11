@@ -13,7 +13,7 @@
 <main><canvas id="stage"></canvas><div id="status">Cargando warp...</div></main>
 <aside>
 <section class="panel"><h2>Escalas</h2><div id="lineList" class="line-list"></div></section>
-<section class="panel"><h2>Controles</h2><p class="help">Click izquierdo coloca primero <strong>inicio</strong> y luego <strong>fin</strong> de la escala activa. Arrastra cualquier extremo para ajustarlo. Rueda del mouse hace zoom. <kbd>Shift</kbd>, click medio o click derecho hacen paneo. <kbd>Enter</kbd> confirma, <kbd>Esc</kbd> cancela.</p></section>
+<section class="panel"><h2>Controles</h2><p class="help">Click izquierdo coloca primero <strong>inicio</strong> y luego <strong>fin</strong> de la escala activa. Arrastra cualquier extremo para ajustarlo. Rueda del mouse hace zoom. <kbd>Shift</kbd>, click medio o click derecho hacen paneo. <kbd>Enter</kbd> confirma. <kbd>Esc</kbd> no hace nada (usa el boton Cancelar para abortar).</p></section>
 </aside>
 <script>
 const INITIAL=__INITIAL_STATE__;
@@ -142,7 +142,7 @@ document.getElementById("clearActiveBtn").onclick=()=>{if(!state.activeLabel)ret
 document.getElementById("clearBtn").onclick=()=>{labels.forEach(label=>{state.lines[label].p1=null;state.lines[label].p2=null;});state.activeLabel=labels[0]||null;draw();};
 document.getElementById("cancelBtn").onclick=()=>submitResult(false);
 confirmBtn.onclick=()=>{if(hasAll())submitResult(true);};
-window.addEventListener("keydown",e=>{if(e.key==="Enter"&&hasAll())submitResult(true);if(e.key==="Escape")submitResult(false);if(e.key==="ArrowUp"){e.preventDefault();cycleActive(-1);}if(e.key==="ArrowDown"){e.preventDefault();cycleActive(1);}if((e.key==="Delete"||e.key==="Backspace")&&state.activeLabel){e.preventDefault();state.lines[state.activeLabel].p1=null;state.lines[state.activeLabel].p2=null;draw();}});
+window.addEventListener("keydown",e=>{if(e.key==="Enter"&&hasAll())submitResult(true);if(e.key==="Escape"){e.preventDefault();}if(e.key==="ArrowUp"){e.preventDefault();cycleActive(-1);}if(e.key==="ArrowDown"){e.preventDefault();cycleActive(1);}if((e.key==="Delete"||e.key==="Backspace")&&state.activeLabel){e.preventDefault();state.lines[state.activeLabel].p1=null;state.lines[state.activeLabel].p2=null;draw();}});
 window.addEventListener("resize",resizeStage);window.addEventListener("beforeunload",()=>{if(!submitted)navigator.sendBeacon("/result",JSON.stringify({confirmed:false}));});
 img.onload=()=>resizeStage();img.onerror=()=>setStatus("No se pudo cargar el warp.");img.src="/image";draw();
 </script>

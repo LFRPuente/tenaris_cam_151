@@ -13,7 +13,7 @@
 <main><canvas id="stage"></canvas><div id="status">Cargando warp...</div></main>
 <aside>
 <section class="panel"><h2>Puntos</h2><div id="coords" class="coords">Sin puntos.</div></section>
-<section class="panel"><h2>Controles</h2><p class="help">Click izquierdo coloca mark_02 y luego mark_03. Arrastra un punto para ajustarlo. Rueda del mouse hace zoom. Shift, click medio o click derecho arrastra la imagen. Enter confirma, Esc cancela.</p></section>
+<section class="panel"><h2>Controles</h2><p class="help">Click izquierdo coloca mark_02 y luego mark_03. Arrastra un punto para ajustarlo. Rueda del mouse hace zoom. Shift, click medio o click derecho arrastra la imagen. Enter confirma. Esc no hace nada (usa el boton Cancelar para abortar).</p></section>
 </aside>
 <script>
 const INITIAL=__INITIAL_STATE__;
@@ -69,7 +69,7 @@ stage.addEventListener("pointerup",stopDrag);stage.addEventListener("pointercanc
 stage.addEventListener("wheel",e=>{e.preventDefault();const cp=canvasPoint(e),before=c2i(cp),f=e.deltaY<0?1.12:1/1.12;state.zoom=Math.max(.02,Math.min(30,state.zoom*f));state.offsetX=cp.x-before.x*state.zoom;state.offsetY=cp.y-before.y*state.zoom;draw();},{passive:false});
 async function submitResult(confirmed){if(submitted)return;submitted=true;const payload={confirmed,points:hasAll()?state.pts:null};try{await fetch("/result",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});}finally{setStatus(confirmed?"Confirmado. Puedes volver al notebook.":"Cancelado. Puedes volver al notebook.");setTimeout(()=>window.close(),250);}}
 document.getElementById("fitBtn").onclick=fitImage;document.getElementById("clearBtn").onclick=()=>{state.pts={};state.nextIdx=0;draw();};document.getElementById("cancelBtn").onclick=()=>submitResult(false);confirmBtn.onclick=()=>{if(hasAll())submitResult(true);};
-window.addEventListener("keydown",e=>{if(e.key==="Enter"&&hasAll())submitResult(true);if(e.key==="Escape")submitResult(false);if(e.key==="Delete"||e.key==="Backspace"){e.preventDefault();const prev=(state.nextIdx-1+LABELS.length)%LABELS.length;delete state.pts[LABELS[prev]];state.nextIdx=prev;draw();}});
+window.addEventListener("keydown",e=>{if(e.key==="Enter"&&hasAll())submitResult(true);if(e.key==="Escape"){e.preventDefault();}if(e.key==="Delete"||e.key==="Backspace"){e.preventDefault();const prev=(state.nextIdx-1+LABELS.length)%LABELS.length;delete state.pts[LABELS[prev]];state.nextIdx=prev;draw();}});
 window.addEventListener("resize",resizeStage);window.addEventListener("beforeunload",()=>{if(!submitted)navigator.sendBeacon("/result",JSON.stringify({confirmed:false}));});
 img.onload=()=>{resizeStage();};img.onerror=()=>setStatus("No se pudo cargar el warp.");img.src="/image";
 </script>

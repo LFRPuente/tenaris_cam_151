@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,7 @@ import cv2
 from src.cam151_ref_detection.roi_store import load_rois
 from src.cam151_ref_detection.tube_detection_preview import TubeDetectionPreviewResult
 from src.cam151_ref_detection.tube_matcher_proc import export_tube_measurements
+from src.pipe_end_yolo import PipeEndInferenceResult, predictions_to_x_start_list, run_pipe_end_inference
 
 from .config import CameraPipelineConfig, PipelineOutputConfig
 from .notebook_style_detection import detect_tubes_like_notebook
@@ -24,6 +26,7 @@ class CameraProcessingResult:
     tube_count: int
     detection_result: TubeDetectionPreviewResult
     tube_measurements: list[dict[str, Any]]
+    pipe_end_yolo: PipeEndInferenceResult | None = None
 
 
 def _line_x_at_y(top_point: list[float], bottom_point: list[float], y_value: float) -> float:
@@ -75,6 +78,42 @@ def _reference_line_for_export(result: TubeDetectionPreviewResult) -> dict[str, 
         "mark_02": [float(top[0]), float(top[1])],
         "mark_03": [float(bottom[0]), float(bottom[1])],
     }
+
+
+def _pipe_end_yolo_enabled() -> bool:
+    raw = str(os.environ.get("PIPE_END_YOLO_ENABLED", "0")).strip().lower()
+    return raw in {"1", "true", "yes", "on", "yolo", "pipe_end"}
+
+
+def _pipe_end_yolo_device() -> str | None:
+    raw = str(os.environ.get("PIPE_END_YOLO_DEVICE", "")).strip()
+    return raw or None
+
+
+def _apply_pipe_end_yolo_detection(result: TubeDetectionPreviewResult, output_dir: Path) -> PipeEndInferenceResult:
+    yolo_output_dir = output_dir / "pipe_end_yolo"
+    yolo_result = run_pipe_end_inference(
+        result.homography.warp_path,
+        yolo_output_dir,
+        device=_pipe_end_yolo_device(),
+    )
+    x_start_list = predictions_to_x_start_list(yolo_result.predictions)
+    if not x_start_list:
+        raise ValueError(
+            f"YOLO pipe_end no detecto tubos en {result.homography.warp_path}. "
+            "Revisa el modelo o desactiva PIPE_END_YOLO_ENABLED=0 para usar el detector clasico."
+        )
+
+    result.x_start_list = x_start_list
+    result.tube_count = len(x_start_list)
+    result.detection_overlay_path = yolo_result.overlay_path
+    result.processing_stage = "yolo_pipe_end"
+    result.dominant_period = None
+    result.energy_start_index = int(min(float(item["y_center"]) for item in x_start_list))
+    result.peaks_index = [int(round(float(item["y_center"]))) for item in x_start_list]
+    result.peaks_index_dom = list(result.peaks_index)
+    result.rejected_tube_gaps = []
+    return yolo_result
 
 
 def build_tube_measurements(result: TubeDetectionPreviewResult) -> list[dict[str, Any]]:
@@ -133,8 +172,38 @@ def process_camera(config: CameraPipelineConfig, outputs: PipelineOutputConfig) 
         roi_payload=roi_payload,
         output_dir=output_dir,
     )
+    yolo_result: PipeEndInferenceResult | None = None
+    detection_source = "notebook_style_sobel_x_roi"
+    if _pipe_end_yolo_enabled():
+        yolo_result = _apply_pipe_end_yolo_detection(result, output_dir)
+        detection_source = "yolo_pipe_end"
+
     tube_measurements = build_tube_measurements(result)
     analysis_image_path = _write_analysis_image(result, output_dir)
+
+    extra_meta = {
+        "px_per_in_nb": None if result.px_per_in is None else float(result.px_per_in),
+        "scale_samples": _scale_samples_for_export(result),
+        "detection_roi": None if result.detection_roi is None else [float(v) for v in result.detection_roi],
+        "reference_line_warp": _reference_line_for_export(result),
+        "analysis_image_path": None if analysis_image_path is None else str(analysis_image_path),
+        "processing_mode": result.processing_mode,
+        "processing_stage": result.processing_stage,
+        "detection_source": detection_source,
+        "backend_pipeline": "tenaris_tube_pipeline",
+    }
+    if yolo_result is not None:
+        extra_meta["pipe_end_yolo"] = {
+            "enabled": True,
+            "model_path": str(yolo_result.model_path),
+            "prediction_count": int(yolo_result.count),
+            "predictions_path": str(yolo_result.predictions_path),
+            "overlay_path": str(yolo_result.overlay_path),
+            "imgsz": int(yolo_result.imgsz),
+            "conf": float(yolo_result.conf),
+            "iou": float(yolo_result.iou),
+            "device": yolo_result.device,
+        }
 
     measurement_export_path = export_tube_measurements(
         config.side,
@@ -143,16 +212,7 @@ def process_camera(config: CameraPipelineConfig, outputs: PipelineOutputConfig) 
         roi_path=str(config.roi_path),
         source_notebook=config.source_name,
         dataset_name=config.dataset_name,
-        extra_meta={
-            "px_per_in_nb": None if result.px_per_in is None else float(result.px_per_in),
-            "scale_samples": _scale_samples_for_export(result),
-            "detection_roi": None if result.detection_roi is None else [float(v) for v in result.detection_roi],
-            "reference_line_warp": _reference_line_for_export(result),
-            "analysis_image_path": None if analysis_image_path is None else str(analysis_image_path),
-            "processing_mode": result.processing_mode,
-            "processing_stage": result.processing_stage,
-            "backend_pipeline": "tenaris_tube_pipeline",
-        },
+        extra_meta=extra_meta,
         output_dir=outputs.matcher_input_dir,
     )
 
@@ -165,4 +225,5 @@ def process_camera(config: CameraPipelineConfig, outputs: PipelineOutputConfig) 
         tube_count=len(tube_measurements),
         detection_result=result,
         tube_measurements=tube_measurements,
+        pipe_end_yolo=yolo_result,
     )

@@ -1,0 +1,732 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Digital Framing Calibrator</title>
+<style>
+:root{
+  --bg:#f4ecd5;
+  --panel:#fffdf6;
+  --ink:#1f2430;
+  --muted:#645f54;
+  --line:#d8ccb0;
+  --accent:#3f5f86;
+  --accent-2:#c46d21;
+  --shadow:0 18px 36px rgba(79,62,20,.12);
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  min-height:100vh;
+  background:
+    radial-gradient(circle at top left, rgba(255,255,255,.5), transparent 30%),
+    linear-gradient(180deg, #f8f1da 0%, var(--bg) 42%, #e9debf 100%);
+  color:var(--ink);
+  font-family:"Trebuchet MS","Segoe UI",Tahoma,sans-serif;
+}
+.shell{
+  max-width:1680px;
+  margin:0 auto;
+  padding:24px 20px 28px;
+}
+.topbar{
+  display:flex;
+  justify-content:space-between;
+  gap:16px;
+  align-items:flex-start;
+  margin-bottom:18px;
+}
+.eyebrow{
+  margin:0 0 6px;
+  font-size:12px;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  color:#7a6431;
+}
+.title{
+  margin:0;
+  font-size:30px;
+  line-height:1.04;
+}
+.subtitle{
+  margin:8px 0 0;
+  color:var(--muted);
+  font-size:14px;
+  line-height:1.45;
+}
+.links{
+  display:flex;
+  gap:10px;
+  flex-wrap:wrap;
+}
+.link-btn{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width:132px;
+  padding:10px 16px;
+  border-radius:999px;
+  background:#40361b;
+  color:#fff8e8;
+  text-decoration:none;
+  font-size:13px;
+  font-weight:700;
+  box-shadow:var(--shadow);
+}
+.link-btn.secondary{
+  background:#fff8e8;
+  color:#47391b;
+  border:1px solid #988351;
+}
+.workspace{
+  display:grid;
+  grid-template-columns:380px minmax(0,1fr);
+  gap:18px;
+  align-items:start;
+}
+.panel{
+  background:rgba(255,253,246,.96);
+  border:1px solid rgba(83,67,34,.16);
+  border-radius:24px;
+  box-shadow:var(--shadow);
+}
+.sidebar{
+  padding:18px;
+  display:grid;
+  gap:16px;
+}
+.section{
+  border:1px solid var(--line);
+  border-radius:18px;
+  padding:14px 14px 16px;
+  background:#fffdfa;
+}
+.section h2{
+  margin:0 0 12px;
+  font-size:18px;
+}
+.row{
+  display:grid;
+  gap:8px;
+  margin-bottom:12px;
+}
+.row:last-child{margin-bottom:0}
+.label-line{
+  display:flex;
+  justify-content:space-between;
+  gap:8px;
+  align-items:center;
+  font-size:13px;
+  color:var(--muted);
+}
+.inline{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) 96px;
+  gap:10px;
+  align-items:center;
+}
+input[type="range"]{
+  width:100%;
+  accent-color:var(--accent);
+}
+input[type="number"], select{
+  width:100%;
+  border:1px solid #c4b590;
+  border-radius:10px;
+  padding:8px 10px;
+  background:#fff;
+  color:var(--ink);
+  font:inherit;
+}
+.camera-tabs{
+  display:flex;
+  gap:10px;
+}
+.camera-tab{
+  flex:1;
+  border:1px solid #9e8960;
+  border-radius:14px;
+  padding:10px 12px;
+  background:#fff7e4;
+  color:#5b4522;
+  font:inherit;
+  font-weight:700;
+  cursor:pointer;
+}
+.camera-tab.active{
+  background:var(--accent);
+  color:#fff;
+  border-color:var(--accent);
+}
+.mini{
+  font-size:12px;
+  color:var(--muted);
+  line-height:1.4;
+}
+.stat-grid{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:10px;
+}
+.stat{
+  border:1px solid var(--line);
+  border-radius:14px;
+  padding:10px 11px;
+  background:#fcf9ef;
+}
+.stat .name{
+  font-size:11px;
+  text-transform:uppercase;
+  letter-spacing:.08em;
+  color:#7b705c;
+}
+.stat .value{
+  margin-top:4px;
+  font-size:16px;
+  font-weight:800;
+}
+.copy-btn,.reset-btn{
+  border:1px solid #9e8960;
+  border-radius:12px;
+  padding:10px 12px;
+  background:#4d4020;
+  color:#fff9ea;
+  font:inherit;
+  font-weight:700;
+  cursor:pointer;
+}
+.reset-btn{
+  background:#fff7e4;
+  color:#4d4020;
+}
+.button-row{
+  display:flex;
+  gap:10px;
+}
+pre{
+  margin:0;
+  padding:12px;
+  border-radius:14px;
+  background:#231f17;
+  color:#fef4d8;
+  overflow:auto;
+  font-size:12px;
+  line-height:1.45;
+}
+.stage{
+  padding:18px;
+}
+.canvas-wrap{
+  position:relative;
+  border:1px solid rgba(81,65,31,.2);
+  border-radius:22px;
+  overflow:hidden;
+  background:
+    linear-gradient(45deg, rgba(161,138,86,.12) 25%, transparent 25%, transparent 50%, rgba(161,138,86,.12) 50%, rgba(161,138,86,.12) 75%, transparent 75%, transparent),
+    #f5ebcf;
+  background-size:24px 24px;
+  box-shadow:var(--shadow);
+}
+canvas{
+  display:block;
+  width:100%;
+  height:auto;
+  cursor:grab;
+}
+canvas.dragging{
+  cursor:grabbing;
+}
+.canvas-caption{
+  display:flex;
+  justify-content:space-between;
+  gap:12px;
+  padding:12px 4px 2px;
+  font-size:13px;
+  color:var(--muted);
+}
+.status-pill{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  border-radius:999px;
+  padding:7px 12px;
+  background:#fff6df;
+  border:1px solid #d7bf8f;
+  font-size:12px;
+  color:#594317;
+}
+@media (max-width:1180px){
+  .workspace{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="topbar">
+    <div>
+      <p class="eyebrow">Adjustment Tool</p>
+      <h1 class="title" id="title"></h1>
+      <p class="subtitle">Background = April 22 base image. Overlay = downloaded wide image. Drag the image on the canvas or use the sliders. Use the mouse wheel to change zoom.</p>
+    </div>
+    <div class="links">
+      <a class="link-btn secondary" id="latest-link" href="/">Back to MVP</a>
+      <a class="link-btn secondary" id="history-link" href="/history">History</a>
+    </div>
+  </div>
+
+  <div class="workspace">
+    <div class="panel sidebar">
+      <div class="section">
+        <h2>Context</h2>
+        <div class="row">
+          <label class="label-line" for="run-select"><span>Run</span><span id="run-stamp"></span></label>
+          <select id="run-select"></select>
+        </div>
+        <div class="row">
+          <div class="label-line"><span>Camera</span><span id="camera-label"></span></div>
+          <div class="camera-tabs">
+            <button type="button" class="camera-tab" data-camera="151">cam151</button>
+            <button type="button" class="camera-tab" data-camera="152">cam152</button>
+          </div>
+        </div>
+        <div class="mini" id="image-names"></div>
+      </div>
+
+      <div class="section">
+        <h2>Controls</h2>
+        <div class="row">
+          <div class="label-line"><span>Zoom factor</span><span id="zoom-factor-text"></span></div>
+          <div class="inline">
+            <input id="zoom-factor-range" type="range" min="1" max="3" step="0.01">
+            <input id="zoom-factor-number" type="number" min="1" max="3" step="0.01">
+          </div>
+        </div>
+        <div class="row">
+          <div class="label-line"><span>Offset X</span><span id="offset-x-text"></span></div>
+          <div class="inline">
+            <input id="offset-x-range" type="range" min="-0.6" max="0.6" step="0.001">
+            <input id="offset-x-number" type="number" min="-0.6" max="0.6" step="0.001">
+          </div>
+        </div>
+        <div class="row">
+          <div class="label-line"><span>Offset Y</span><span id="offset-y-text"></span></div>
+          <div class="inline">
+            <input id="offset-y-range" type="range" min="-0.6" max="0.6" step="0.001">
+            <input id="offset-y-number" type="number" min="-0.6" max="0.6" step="0.001">
+          </div>
+        </div>
+        <div class="row">
+          <div class="label-line"><span>Overlay Opacity</span><span id="opacity-text"></span></div>
+          <div class="inline">
+            <input id="opacity-range" type="range" min="0" max="1" step="0.01">
+            <input id="opacity-number" type="number" min="0" max="1" step="0.01">
+          </div>
+        </div>
+        <div class="button-row">
+          <button type="button" class="reset-btn" id="reset-btn">Reset</button>
+          <button type="button" class="copy-btn" id="copy-btn">Copy Snippet</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Readout</h2>
+        <div class="stat-grid">
+          <div class="stat">
+            <div class="name">Shift X px</div>
+            <div class="value" id="shift-x-px"></div>
+          </div>
+          <div class="stat">
+            <div class="name">Shift Y px</div>
+            <div class="value" id="shift-y-px"></div>
+          </div>
+          <div class="stat">
+            <div class="name">Crop Width</div>
+            <div class="value" id="crop-width"></div>
+          </div>
+          <div class="stat">
+            <div class="name">Crop Height</div>
+            <div class="value" id="crop-height"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Snippet</h2>
+        <pre id="snippet"></pre>
+      </div>
+    </div>
+
+    <div class="panel stage">
+      <div class="status-pill" id="status-pill"></div>
+      <div class="canvas-wrap">
+        <canvas id="stage-canvas"></canvas>
+      </div>
+      <div class="canvas-caption">
+        <span id="drag-help">Drag to move. Use the wheel to change zoom.</span>
+        <span id="crop-box-text"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const STATE = __CALIBRATOR_STATE__;
+
+const imageCache = new Map();
+const controls = {
+  zoomFactor: 1,
+  offsetX: 0,
+  offsetY: 0,
+  opacity: 0.55,
+};
+
+let currentCamera = STATE.current_camera || '152';
+let dragState = null;
+
+const els = {
+  title: document.getElementById('title'),
+  latestLink: document.getElementById('latest-link'),
+  historyLink: document.getElementById('history-link'),
+  runSelect: document.getElementById('run-select'),
+  runStamp: document.getElementById('run-stamp'),
+  cameraLabel: document.getElementById('camera-label'),
+  imageNames: document.getElementById('image-names'),
+  zoomFactorRange: document.getElementById('zoom-factor-range'),
+  zoomFactorNumber: document.getElementById('zoom-factor-number'),
+  zoomFactorText: document.getElementById('zoom-factor-text'),
+  offsetXRange: document.getElementById('offset-x-range'),
+  offsetXNumber: document.getElementById('offset-x-number'),
+  offsetXText: document.getElementById('offset-x-text'),
+  offsetYRange: document.getElementById('offset-y-range'),
+  offsetYNumber: document.getElementById('offset-y-number'),
+  offsetYText: document.getElementById('offset-y-text'),
+  opacityRange: document.getElementById('opacity-range'),
+  opacityNumber: document.getElementById('opacity-number'),
+  opacityText: document.getElementById('opacity-text'),
+  shiftXPx: document.getElementById('shift-x-px'),
+  shiftYPx: document.getElementById('shift-y-px'),
+  cropWidth: document.getElementById('crop-width'),
+  cropHeight: document.getElementById('crop-height'),
+  snippet: document.getElementById('snippet'),
+  copyBtn: document.getElementById('copy-btn'),
+  resetBtn: document.getElementById('reset-btn'),
+  statusPill: document.getElementById('status-pill'),
+  cropBoxText: document.getElementById('crop-box-text'),
+  canvas: document.getElementById('stage-canvas'),
+};
+
+const ctx = els.canvas.getContext('2d');
+
+function fmt(value, digits = 3) {
+  return Number(value).toFixed(digits).replace(/0+$/,'').replace(/\.$/,'');
+}
+
+function currentCameraState() {
+  return STATE.cameras[currentCamera];
+}
+
+function loadImage(url) {
+  if (imageCache.has(url)) return imageCache.get(url);
+  const promise = new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error(`Could not load ${url}`));
+    image.src = url;
+  });
+  imageCache.set(url, promise);
+  return promise;
+}
+
+function syncInputs() {
+  els.zoomFactorRange.value = controls.zoomFactor;
+  els.zoomFactorNumber.value = controls.zoomFactor;
+  els.offsetXRange.value = controls.offsetX;
+  els.offsetXNumber.value = controls.offsetX;
+  els.offsetYRange.value = controls.offsetY;
+  els.offsetYNumber.value = controls.offsetY;
+  els.opacityRange.value = controls.opacity;
+  els.opacityNumber.value = controls.opacity;
+  els.zoomFactorText.textContent = fmt(controls.zoomFactor, 3);
+  els.offsetXText.textContent = fmt(controls.offsetX, 4);
+  els.offsetYText.textContent = fmt(controls.offsetY, 4);
+  els.opacityText.textContent = fmt(controls.opacity, 2);
+}
+
+function resetControls() {
+  const initial = currentCameraState().initial_controls;
+  controls.zoomFactor = Math.max(1, Number(initial.zoom_factor || 1));
+  controls.offsetX = Number(initial.offset_x || 0);
+  controls.offsetY = Number(initial.offset_y || 0);
+  controls.opacity = Math.min(1, Math.max(0, Number(initial.opacity || 0.55)));
+  syncInputs();
+}
+
+function buildSnippet() {
+  const state = currentCameraState();
+  const digital = state.current_digital_framing || {};
+  const capturePtz = digital.capture_ptz || state.current_capture_ptz || {};
+  return {
+    enabled: true,
+    force_wide_capture: Boolean(digital.force_wide_capture ?? true),
+    capture_ptz: capturePtz,
+    zoom_factor: Number(fmt(controls.zoomFactor, 4)),
+    offset_x: Number(fmt(controls.offsetX, 6)),
+    offset_y: Number(fmt(controls.offsetY, 6)),
+  };
+}
+
+function updateSnippet() {
+  els.snippet.textContent = JSON.stringify({ digital_framing: buildSnippet() }, null, 2);
+}
+
+function updateMeta(cropBox, baselineWidth, baselineHeight) {
+  const shiftXPx = -controls.offsetX * baselineWidth;
+  const shiftYPx = -controls.offsetY * baselineHeight;
+  els.shiftXPx.textContent = fmt(shiftXPx, 1);
+  els.shiftYPx.textContent = fmt(shiftYPx, 1);
+  els.cropWidth.textContent = String(cropBox.right - cropBox.left);
+  els.cropHeight.textContent = String(cropBox.bottom - cropBox.top);
+  els.cropBoxText.textContent = `crop: left=${cropBox.left}, top=${cropBox.top}, right=${cropBox.right}, bottom=${cropBox.bottom}`;
+  updateSnippet();
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function render() {
+  const cameraState = currentCameraState();
+  Promise.all([
+    loadImage(cameraState.baseline.url),
+    loadImage(cameraState.overlay.url),
+  ]).then(([baselineImg, overlayImg]) => {
+    const baselineWidth = cameraState.baseline.width;
+    const baselineHeight = cameraState.baseline.height;
+    const overlayWidth = cameraState.overlay.width;
+    const overlayHeight = cameraState.overlay.height;
+    els.canvas.width = baselineWidth;
+    els.canvas.height = baselineHeight;
+
+    ctx.clearRect(0, 0, baselineWidth, baselineHeight);
+    ctx.drawImage(baselineImg, 0, 0, baselineWidth, baselineHeight);
+
+    const zoom = Math.max(1, Number(controls.zoomFactor || 1));
+    const cropWidth = Math.max(1, Math.round(overlayWidth / zoom));
+    const cropHeight = Math.max(1, Math.round(overlayHeight / zoom));
+    const maxLeft = Math.max(0, overlayWidth - cropWidth);
+    const maxTop = Math.max(0, overlayHeight - cropHeight);
+    const centerX = (overlayWidth / 2) + (Number(controls.offsetX) * cropWidth);
+    const centerY = (overlayHeight / 2) + (Number(controls.offsetY) * cropHeight);
+    const left = clamp(Math.round(centerX - (cropWidth / 2)), 0, maxLeft);
+    const top = clamp(Math.round(centerY - (cropHeight / 2)), 0, maxTop);
+    const right = left + cropWidth;
+    const bottom = top + cropHeight;
+
+    ctx.save();
+    ctx.globalAlpha = Number(controls.opacity);
+    ctx.drawImage(
+      overlayImg,
+      left,
+      top,
+      cropWidth,
+      cropHeight,
+      0,
+      0,
+      baselineWidth,
+      baselineHeight
+    );
+    ctx.restore();
+
+    updateMeta({ left, top, right, bottom }, baselineWidth, baselineHeight);
+  }).catch((error) => {
+    els.statusPill.textContent = error.message;
+  });
+}
+
+function applyValuesFromInputs() {
+  controls.zoomFactor = Math.max(1, Number(els.zoomFactorNumber.value || els.zoomFactorRange.value || 1));
+  controls.offsetX = Number(els.offsetXNumber.value || els.offsetXRange.value || 0);
+  controls.offsetY = Number(els.offsetYNumber.value || els.offsetYRange.value || 0);
+  controls.opacity = clamp(Number(els.opacityNumber.value || els.opacityRange.value || 0.55), 0, 1);
+  syncInputs();
+  render();
+}
+
+function updateCameraUI() {
+  document.querySelectorAll('.camera-tab').forEach((button) => {
+    button.classList.toggle('active', button.dataset.camera === currentCamera);
+  });
+  const state = currentCameraState();
+  els.cameraLabel.textContent = state.label;
+  els.imageNames.innerHTML =
+    `Base: <strong>${state.baseline.image_name}</strong><br>` +
+    `Overlay: <strong>${state.overlay.image_name}</strong> <span class="mini">(${state.overlay.source_kind})</span>`;
+  els.statusPill.textContent = `Run ${STATE.current_run_id} | ${state.label} | overlay ${state.overlay.source_kind}`;
+}
+
+function navigateToSelection() {
+  const runId = els.runSelect.value;
+  const params = new URLSearchParams();
+  if (runId) params.set('run_id', runId);
+  params.set('camera', currentCamera);
+  window.location.href = `/framing-calibrator?${params.toString()}`;
+}
+
+function populateRuns() {
+  els.runSelect.innerHTML = '';
+  for (const run of STATE.runs || []) {
+    const option = document.createElement('option');
+    option.value = run.run_id;
+    option.textContent = `${run.run_id} ${run.captured_at ? '· ' + run.captured_at : ''}`;
+    if (run.run_id === STATE.current_run_id) option.selected = true;
+    els.runSelect.appendChild(option);
+  }
+  els.runStamp.textContent = STATE.current_run_id || '';
+}
+
+function applyEnglishRuntimeCopy() {
+  const state = currentCameraState();
+  if (state) {
+    els.statusPill.textContent = `Run ${STATE.current_run_id} · ${state.label} · overlay ${state.overlay.source_kind}`;
+  }
+  for (const option of els.runSelect.options) {
+    const run = (STATE.runs || []).find((item) => String(item.run_id) === String(option.value));
+    if (run) {
+      option.textContent = `${run.run_id} ${run.captured_at ? ' · ' + run.captured_at : ''}`;
+    }
+  }
+}
+
+function updateCameraUI() {
+  document.querySelectorAll('.camera-tab').forEach((button) => {
+    button.classList.toggle('active', button.dataset.camera === currentCamera);
+  });
+  const state = currentCameraState();
+  els.cameraLabel.textContent = state.label;
+  els.imageNames.innerHTML =
+    `Base: <strong>${state.baseline.image_name}</strong><br>` +
+    `Overlay: <strong>${state.overlay.image_name}</strong> <span class="mini">(${state.overlay.source_kind})</span>`;
+  els.statusPill.textContent = `Run ${STATE.current_run_id} | ${state.label} | overlay ${state.overlay.source_kind}`;
+}
+
+function populateRuns() {
+  els.runSelect.innerHTML = '';
+  for (const run of STATE.runs || []) {
+    const option = document.createElement('option');
+    option.value = run.run_id;
+    option.textContent = `${run.run_id}${run.captured_at ? ` | ${run.captured_at}` : ''}`;
+    if (run.run_id === STATE.current_run_id) option.selected = true;
+    els.runSelect.appendChild(option);
+  }
+  els.runStamp.textContent = STATE.current_run_id || '';
+}
+
+function applyEnglishRuntimeCopy() {
+  const state = currentCameraState();
+  if (state) {
+    els.statusPill.textContent = `Run ${STATE.current_run_id} | ${state.label} | overlay ${state.overlay.source_kind}`;
+  }
+  for (const option of els.runSelect.options) {
+    const run = (STATE.runs || []).find((item) => String(item.run_id) === String(option.value));
+    if (run) {
+      option.textContent = `${run.run_id}${run.captured_at ? ` | ${run.captured_at}` : ''}`;
+    }
+  }
+}
+
+function attachControlBindings() {
+  [
+    [els.zoomFactorRange, els.zoomFactorNumber],
+    [els.offsetXRange, els.offsetXNumber],
+    [els.offsetYRange, els.offsetYNumber],
+    [els.opacityRange, els.opacityNumber],
+  ].forEach(([rangeEl, numberEl]) => {
+    rangeEl.addEventListener('input', () => {
+      numberEl.value = rangeEl.value;
+      applyValuesFromInputs();
+    });
+    numberEl.addEventListener('input', () => {
+      rangeEl.value = numberEl.value;
+      applyValuesFromInputs();
+    });
+  });
+
+  els.resetBtn.addEventListener('click', () => {
+    resetControls();
+    render();
+  });
+
+  els.copyBtn.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(els.snippet.textContent);
+      els.statusPill.textContent = 'Snippet copied to the clipboard.';
+    } catch (error) {
+      els.statusPill.textContent = `Could not copy: ${error.message}`;
+    }
+  });
+
+  els.runSelect.addEventListener('change', navigateToSelection);
+
+  document.querySelectorAll('.camera-tab').forEach((button) => {
+    button.addEventListener('click', () => {
+      currentCamera = button.dataset.camera;
+      resetControls();
+      updateCameraUI();
+      applyEnglishRuntimeCopy();
+      navigateToSelection();
+    });
+  });
+
+  els.canvas.addEventListener('pointerdown', (event) => {
+    dragState = { x: event.clientX, y: event.clientY };
+    els.canvas.classList.add('dragging');
+    els.canvas.setPointerCapture(event.pointerId);
+  });
+
+  els.canvas.addEventListener('pointermove', (event) => {
+    if (!dragState) return;
+    const rect = els.canvas.getBoundingClientRect();
+    const dx = event.clientX - dragState.x;
+    const dy = event.clientY - dragState.y;
+    dragState = { x: event.clientX, y: event.clientY };
+    controls.offsetX -= dx / rect.width;
+    controls.offsetY -= dy / rect.height;
+    controls.offsetX = clamp(controls.offsetX, -0.6, 0.6);
+    controls.offsetY = clamp(controls.offsetY, -0.6, 0.6);
+    syncInputs();
+    render();
+  });
+
+  const clearDrag = () => {
+    dragState = null;
+    els.canvas.classList.remove('dragging');
+  };
+  els.canvas.addEventListener('pointerup', clearDrag);
+  els.canvas.addEventListener('pointercancel', clearDrag);
+
+  els.canvas.addEventListener('wheel', (event) => {
+    event.preventDefault();
+    const delta = event.deltaY < 0 ? 0.03 : -0.03;
+    controls.zoomFactor = clamp(controls.zoomFactor + delta, 1, 3);
+    syncInputs();
+    render();
+  }, { passive: false });
+}
+
+function init() {
+  els.title.textContent = STATE.title;
+  els.latestLink.href = STATE.latest_url || '/';
+  els.historyLink.href = STATE.history_url || '/history';
+  populateRuns();
+  updateCameraUI();
+  applyEnglishRuntimeCopy();
+  resetControls();
+  attachControlBindings();
+  render();
+}
+
+init();
+</script>
+</body>
+</html>

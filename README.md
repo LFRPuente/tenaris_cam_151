@@ -1,54 +1,64 @@
-# Cam151 Automatic Ref Detection
+# Tenaris Camera MVP
 
-Clean bootstrap project for building a dedicated automatic detection pipeline for `cam151`.
+Local MVP for downloading camera pairs, processing tube measurements, matching both camera views, and visualizing the sorting table.
 
-This repo is intentionally smaller than the older `automatic_ref_detection` workspace:
+## Main Runtime
 
-- no legacy notebook sprawl
-- no cross-camera assumptions
-- no SAM dependency in the first bootstrap step
+- `run_sorting_table_mvp.py`: foreground launcher for the MVP.
+- `run_sorting_table_mvp_bg.py`: background launcher for the MVP.
+- `process_tube_pair.py`: CLI entrypoint for processing one raw cam151/cam152 pair.
+- `config.example.json`: safe camera config template; copy to `config.json` locally and fill credentials/IPs.
+- `src/tenaris_tube_pipeline/`: clean backend processing pipeline extracted from the notebooks.
+- `src/cam151_ref_detection/sorting_table_mvp_proc.py`: MVP server, history, capture endpoint, image/table state.
+- `src/cam151_ref_detection/capture_history.py`: camera download, capture history, and capture processing orchestration.
 
-Current goal:
+## Calibration And Internal Tools
 
-1. process new `cam151` wide images
-2. detect stable geometric/green structures
-3. generate debug artifacts and a machine-readable summary
-4. use that output to design the real `cam151` detection pipeline
+- `notebooks/tube_detection_step_by_step_cam151.ipynb`
+- `notebooks/tube_detection_step_by_step_cam152.ipynb`
+- `src/cam151_ref_detection/warp_roi_picker_proc.py`
+- `src/cam151_ref_detection/scale_line_picker_proc.py`
+- `src/cam151_ref_detection/ref_line_picker_proc.py`
+- `src/cam151_ref_detection/homography_preview.py`
 
-## Layout
+## Pipe-End YOLO Work
 
-- `PROJECT_CONTEXT.md`: current project context and next steps
-- `test_images/`: local `cam151` images copied into the repo
-- `src/cam151_ref_detection/`: minimal Python package
-- `run_cam151_detection.py`: CLI entrypoint
-- `run_roi_web_server.py`: local web server for multi-ROI selection
-- `web_roi_picker/`: HTML/CSS/JS ROI picker
-- `artifacts/`: generated outputs
-- `manual_rois/`: saved ROI JSON/crops (generated locally, gitignored)
+- `pipe_end_detection/capture_pipe_end_dataset.py`: captures clean wide images for YOLO annotation.
+- `apps/pipe_end_annotator/annotate_app.py`: local browser app for drawing/correcting YOLO boxes.
+- `pipe_end_detection/scripts/prepare_yolo_dataset.py`: prepares YOLO dataset splits.
+- `pipe_end_detection/scripts/train_yolo.py`: trains the YOLO model.
+- `pipe_end_detection/scripts/predict_unlabeled.py`: generates AI boxes for review.
+- `pipe_end_detection/ANNOTATION_GUIDE.md`: labeling rules.
+- `src/pipe_end_yolo/inference.py`: experimental runtime YOLO inference hook for the processing pipeline.
 
-## Image set
+Current production default:
 
-Images live inside `test_images/` and the notebook lets you choose by index.
+- The MVP uses the classical/notebook-style detector.
+- YOLO `pipe_end` inference is present as an experimental hook but is disabled by default.
+- Before YOLO becomes the production detector, it must be validated in the notebooks against multiple history images from both cameras.
 
-## How to run
+Runtime controls:
 
-```powershell
-python run_cam151_detection.py ".\test_images\cam151_wide_20260323_120028.jpg"
-```
+- `PIPE_END_YOLO_MODEL`: optional explicit model path.
+- `PIPE_END_YOLO_DEVICE`: optional Ultralytics device, for example `0` or `cpu`.
+- `PIPE_END_YOLO_ENABLED=1`: enables YOLO tube-start detection for experimental processing.
 
-## ROI web app
+Large local data is intentionally ignored:
 
-```powershell
-python run_roi_web_server.py
-```
+- `artifacts/`
+- `pipe_end_detection/captures/`
+- `pipe_end_detection/annotation_pool/images/`
+- `pipe_end_detection/dataset/`
+- `pipe_end_detection/runs/`
+- `models/`
 
-Then open:
+Important docs:
 
-- `http://127.0.0.1:8765/web_roi_picker/`
+- `MVP_CONTEXT.md`: detailed context for the MVP and processing pipeline.
+- `YOLO_MVP_INTEGRATION_PLAN.md`: how YOLO should be validated and integrated into the MVP.
+- `PIPE_END_YOLO_TRAINING_PLAN.md`: how to keep annotating and training the `pipe_end` model.
+- `GITHUB_HANDOFF.md`: how to move this repo to another computer/GPU.
 
-The app supports:
+## Next Development Rule
 
-- multiple ROIs per image
-- selection/deletion
-- saving ROI JSON to `manual_rois/`
-- exporting numbered crops and an overview image
+Before changing the MVP to use YOLO as the primary source of individual tube starts, validate YOLO inside the cam151/cam152 notebooks on the same homography warp images used by the classical pipeline. Keep `PIPE_END_YOLO_ENABLED=0` unless running an explicit experiment.

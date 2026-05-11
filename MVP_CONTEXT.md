@@ -67,7 +67,6 @@ The current app is not the detector itself. It is the visualization layer on top
 
 ### 3.3 Existing ROI / matching / measurement ecosystem
 
-- [run_roi_web_server.py](/c:/Users/luis_/Desktop/tenaris_cam_152/run_roi_web_server.py)
 - [run_manual_tube_measure.py](/c:/Users/luis_/Desktop/tenaris_cam_152/run_manual_tube_measure.py)
 - [run_manual_tube_measure_bg.py](/c:/Users/luis_/Desktop/tenaris_cam_152/run_manual_tube_measure_bg.py)
 - [run_tube_matcher.py](/c:/Users/luis_/Desktop/tenaris_cam_152/run_tube_matcher.py)
@@ -76,6 +75,9 @@ The current app is not the detector itself. It is the visualization layer on top
 - [src/cam151_ref_detection/tube_matcher_proc.py](/c:/Users/luis_/Desktop/tenaris_cam_152/src/cam151_ref_detection/tube_matcher_proc.py)
 - [src/cam151_ref_detection/homography_preview.py](/c:/Users/luis_/Desktop/tenaris_cam_152/src/cam151_ref_detection/homography_preview.py)
 - [src/cam151_ref_detection/roi_store.py](/c:/Users/luis_/Desktop/tenaris_cam_152/src/cam151_ref_detection/roi_store.py)
+- [src/cam151_ref_detection/warp_roi_picker_proc.py](/c:/Users/luis_/Desktop/tenaris_cam_152/src/cam151_ref_detection/warp_roi_picker_proc.py)
+- [src/cam151_ref_detection/ref_line_picker_proc.py](/c:/Users/luis_/Desktop/tenaris_cam_152/src/cam151_ref_detection/ref_line_picker_proc.py)
+- [src/cam151_ref_detection/scale_line_picker_proc.py](/c:/Users/luis_/Desktop/tenaris_cam_152/src/cam151_ref_detection/scale_line_picker_proc.py)
 
 ### 3.4 Source notebooks
 
@@ -582,8 +584,8 @@ The MVP viewer does not replace the older tools.
 
 Current tool roles are:
 
-- ROI tool:
-  - define and update manual ROI inputs;
+- ROI / reference pickers:
+  - define and update manual ROI, reference-line, and scale inputs from the notebook/web picker flow;
 - manual measure app:
   - inspect or adjust measurement-oriented logic / references;
 - matcher app:
@@ -698,4 +700,77 @@ Whenever any of the following changes, this document should be updated:
 - Sorting Table MVP interaction model;
 - launcher commands;
 - live operational caveats.
+
+---
+
+## 23. Capture History Extension (2026-04-27)
+
+The Sorting Table MVP now also supports a camera-driven pair workflow on top of the existing latest-artifact viewer model.
+
+Current behavior:
+
+- the main MVP view includes a `Descargar y procesar` action;
+- that action downloads a fresh pair from `cam151` and `cam152`;
+- the pair is processed automatically with the clean backend pipeline;
+- the downloaded raw images and the full processing outputs are stored inside a dedicated per-run folder;
+- the app also exposes a separate `/history` view where runs can be filtered by capture date and reopened later.
+
+Current per-run storage convention:
+
+- `artifacts/capture_history/<run_id>/raw/`
+- `artifacts/capture_history/<run_id>/processing/backend_tube_pipeline/`
+- `artifacts/capture_history/<run_id>/processing/tube_matcher_inputs/`
+- `artifacts/capture_history/<run_id>/processing/tube_matching/`
+- `artifacts/capture_history/<run_id>/manifest.json`
+
+Operational rule:
+
+- opening a historical run only changes what the MVP viewer renders;
+- it does not globally retarget every tool to that historical run;
+- the global `latest` artifacts still represent the most recent successfully downloaded and processed run.
+
+Current ROI rule for downloaded pairs:
+
+- downloaded pairs currently reuse fixed ROI/reference/scale inputs instead of per-run ROI authoring;
+- `cam151` uses `manual_rois/_frozen_defaults/cam_151_202604022_rois.toml`;
+- `cam152` uses `manual_rois/_frozen_defaults/cam_152_202604022_rois.toml`.
+
+This is an intentional temporary rule. ROI / reference / scale editing for newly downloaded pairs remains a future extension.
+
+---
+
+## 24. Pipe-End YOLO Status (2026-05-10)
+
+YOLO `pipe_end` work now exists in this repository, but it is not yet the default detector for the MVP.
+
+Current rule:
+
+- production MVP processing uses the classical notebook-style detector by default;
+- YOLO can be enabled only as an experiment with `PIPE_END_YOLO_ENABLED=1`;
+- the immediate integration path is notebook-first validation, not direct production replacement.
+
+Relevant files:
+
+- `src/pipe_end_yolo/inference.py`
+- `apps/pipe_end_annotator/annotate_app.py`
+- `pipe_end_detection/capture_pipe_end_dataset.py`
+- `pipe_end_detection/scripts/prepare_yolo_dataset.py`
+- `pipe_end_detection/scripts/train_yolo.py`
+- `pipe_end_detection/scripts/predict_unlabeled.py`
+- `YOLO_MVP_INTEGRATION_PLAN.md`
+- `PIPE_END_YOLO_TRAINING_PLAN.md`
+- `GITHUB_HANDOFF.md`
+
+Operational meaning:
+
+- downloaded MVP runs should remain stable with the classical detector unless YOLO is explicitly enabled;
+- YOLO should first be run inside the cam151/cam152 notebooks on the same homography warp images used by the existing detector;
+- the notebook comparison must check tube count, duplicate detections, missed detections, ordering, and cam151/cam152 match consistency;
+- only after that validation should YOLO be allowed to drive `x_start_list` for MVP processing.
+
+Large data policy:
+
+- raw captures, annotation images, generated datasets, training runs, and `.pt` model weights are intentionally ignored by normal Git;
+- if all data must move through GitHub, use Git LFS or release artifacts;
+- labels and small metadata can be versioned normally when useful.
 

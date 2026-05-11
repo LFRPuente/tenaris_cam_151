@@ -49,8 +49,10 @@ def main() -> int:
     )
     result = process_tube_pair(cam151, cam152, outputs, output_stem=args.output_stem)
     summary = result.match_payload.get("summary") or {}
-    print(f"cam151 tubos: {result.cam151.tube_count}")
-    print(f"cam152 tubos: {result.cam152.tube_count}")
+    cam151_source = "YOLO pipe_end" if result.cam151.pipe_end_yolo is not None else "clasico"
+    cam152_source = "YOLO pipe_end" if result.cam152.pipe_end_yolo is not None else "clasico"
+    print(f"cam151 tubos: {result.cam151.tube_count} ({cam151_source})")
+    print(f"cam152 tubos: {result.cam152.tube_count} ({cam152_source})")
     print(f"matches: {summary.get('matched')} | left_only: {summary.get('left_only')} | right_only: {summary.get('right_only')}")
     print(f"resultado JSON: {result.result_json_path}")
     print(f"resultado XLSX: {result.result_xlsx_path}")

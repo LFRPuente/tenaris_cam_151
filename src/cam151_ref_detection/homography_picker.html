@@ -14,7 +14,7 @@
 <aside>
 <section class="panel"><h2>Warp preview</h2><canvas id="preview" width="320" height="460"></canvas></section>
 <section class="panel"><h2>Puntos</h2><div id="pointList" class="point-list"></div></section>
-<section class="panel"><h2>Controles</h2><p class="help">Click izquierdo coloca el siguiente punto. Arrastra un punto para moverlo. Rueda del mouse hace zoom. Shift, click medio o click derecho arrastra la imagen. Enter confirma, Esc cancela y Delete borra el ultimo punto.</p></section>
+<section class="panel"><h2>Controles</h2><p class="help">Click izquierdo coloca el siguiente punto. Arrastra un punto para moverlo. Rueda del mouse hace zoom. Shift, click medio o click derecho arrastra la imagen. Enter confirma y Delete borra el ultimo punto. Esc no hace nada (usa el boton Cancelar para abortar).</p></section>
 </aside>
 <script>
 const INITIAL=__INITIAL_STATE__;
@@ -64,7 +64,7 @@ function stopDrag(e){if(stage.hasPointerCapture(e.pointerId))stage.releasePointe
 stage.addEventListener("wheel",e=>{e.preventDefault();const cp=canvasPoint(e),before=c2i(cp),f=e.deltaY<0?1.12:1/1.12;state.zoom=Math.max(.02,Math.min(30,state.zoom*f));state.offsetX=cp.x-before.x*state.zoom;state.offsetY=cp.y-before.y*state.zoom;draw();},{passive:false});
 async function submitResult(confirmed){if(submitted)return;submitted=true;const payload={confirmed,pts:{}};if(confirmed){for(const l of LABELS)payload.pts[l]=[state.pts[l].x,state.pts[l].y];}try{await fetch("/result",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});}finally{setStatus(confirmed?"Confirmado. Puedes volver al notebook.":"Cancelado. Puedes volver al notebook.");setTimeout(()=>window.close(),250);}}
 document.getElementById("fitBtn").onclick=fitImage;document.getElementById("deleteBtn").onclick=deleteLast;document.getElementById("clearBtn").onclick=clearPoints;document.getElementById("cancelBtn").onclick=()=>submitResult(false);confirmBtn.onclick=()=>{if(allPlaced())submitResult(true);};
-window.addEventListener("keydown",e=>{if(e.key==="Enter"&&allPlaced())submitResult(true);if(e.key==="Escape")submitResult(false);if(e.key==="Delete"||e.key==="Backspace"){e.preventDefault();deleteLast();}});
+window.addEventListener("keydown",e=>{if(e.key==="Enter"&&allPlaced())submitResult(true);if(e.key==="Escape"){e.preventDefault();}if(e.key==="Delete"||e.key==="Backspace"){e.preventDefault();deleteLast();}});
 window.addEventListener("resize",resizeStage);
 window.addEventListener("beforeunload",()=>{if(!submitted)navigator.sendBeacon("/result",JSON.stringify({confirmed:false}));});
 img.onload=()=>{srcCanvas.width=img.naturalWidth;srcCanvas.height=img.naturalHeight;srcCtx.drawImage(img,0,0);srcPixels=srcCtx.getImageData(0,0,img.naturalWidth,img.naturalHeight);resizeStage();markPreviewDirty();};

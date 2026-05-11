@@ -1,8 +1,8 @@
 image_name = "cam_152_202604022.jpeg"
 updated_at = "2026-04-22T14:42:39"
 overview_path = "cam_152_202604022/roi_overview.jpg"
-src_points_override = [[424.253, 136.416], [965.282, 105.752], [14.372, 1088.531], [1170.946, 1040.318]]
-dst_rect_override = [776.945, -17.887, 1251.71, 1043.978]
+src_points_override = [[618.897, 387.176], [1229.5, 369.304], [125.913, 1470.747], [1427.843, 1446.202]]
+dst_rect_override = [732.283, -8.046, 1399.563, 1204.287]
 
 [[points]]
 id = "point_01"
@@ -44,8 +44,8 @@ note = ""
 id = "point_05"
 kind = "mark"
 label = "mark_02"
-x = 888
-y = 110
+x = 1144
+y = 375
 roi_id = ""
 note = ""
 
@@ -53,8 +53,8 @@ note = ""
 id = "point_06"
 kind = "mark"
 label = "mark_03"
-x = 1009
-y = 1048
+x = 1246
+y = 1472
 roi_id = ""
 note = ""
 
@@ -84,10 +84,10 @@ note = ""
 id = "line_03"
 kind = "warp_scale_ref"
 label = "wscale_01"
-x1 = 95
-y1 = 1062
-x2 = 255
-y2 = 1062
+x1 = 99
+y1 = 1196
+x2 = 281
+y2 = 1196
 roi_id = ""
 note = ""
 real_distance = 41.0
