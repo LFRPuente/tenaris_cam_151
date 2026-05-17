@@ -829,3 +829,156 @@ Repository / GitHub policy as of this handoff:
 - the active inference model is expected at `models/pipe_end_active/best.pt`;
 - `models/pipe_end_active/best.pt` is also tracked with Git LFS so a second machine can run the current YOLO MVP without manually copying the model.
 
+---
+
+## 26. Agent Handoff Notes For Next Work Session (2026-05-17)
+
+This is the current working handoff for another agent or another computer.
+
+### 26.1 Repository
+
+Active repository:
+
+- `https://github.com/LFRPuente/tenaris_cam_151`
+
+Current branch:
+
+- `main`
+
+Important setup note:
+
+- this repo now uses Git LFS for annotation images and `.pt` model weights;
+- after cloning on another computer, run `git lfs pull`;
+- the active YOLO model should exist at `models/pipe_end_active/best.pt`.
+
+### 26.2 What Was Being Built
+
+The MVP has moved from the original table/raw-image viewer toward an operator-facing sorting-table screen.
+
+Current intended behavior:
+
+- backend downloads a pair from `cam151` and `cam152`;
+- backend warps each camera using the current ROI / homography defaults;
+- YOLO detects individual `pipe_end` boxes in the homography warp;
+- post-processing removes overlapping boxes, contained large boxes, and vertical duplicates;
+- Sobel-X refinement inside each accepted YOLO box estimates the true pipe-end x coordinate;
+- both cameras are matched by vertical slot order starting from the bottom green reference;
+- the MVP default screen is now the `Diagram` tab;
+- `Full View` still exists for debugging and shows the table, raw cam151, raw cam152, and the diagram.
+
+The operator diagram is the primary UI:
+
+- it only shows pipes `1` through `10`;
+- pipe `1` is rendered at the bottom;
+- visual tube length uses `500 in` as the reference length;
+- length text is centered inside each tube;
+- color rules:
+  - `<491 in`: red;
+  - `491-493 in`: orange;
+  - `493-496 in`: green;
+  - `>496 in`: yellow;
+  - unmatched or missing length: black.
+
+### 26.3 Main Files To Read First
+
+For MVP runtime:
+
+- `src/cam151_ref_detection/sorting_table_mvp_proc.py`
+- `src/cam151_ref_detection/sorting_table_mvp.html`
+- `src/cam151_ref_detection/capture_history.py`
+- `src/cam151_ref_detection/tube_matcher_proc.py`
+
+For YOLO pipe-end detection:
+
+- `src/pipe_end_yolo/inference.py`
+- `src/tenaris_tube_pipeline/camera.py`
+- `notebooks/pipe_end_yolo_cam151_cam152.ipynb`
+- `pipe_end_detection/README_ANNOTATOR.md`
+- `pipe_end_detection/scripts/train_yolo.py`
+- `pipe_end_detection/scripts/predict_unlabeled.py`
+
+For homography drift / camera movement inspection:
+
+- `run_homography_timeline.py`
+- `run_homography_timeline_bg.py`
+- `src/cam151_ref_detection/homography_timeline_proc.py`
+- `src/cam151_ref_detection/homography_profiles.py`
+
+### 26.4 Commands
+
+Run the MVP app:
+
+```powershell
+.\.venv\Scripts\python.exe run_sorting_table_mvp_bg.py --port 58597 --url-file artifacts\sorting_table_mvp\live_url_current.txt
+```
+
+Open:
+
+```text
+http://127.0.0.1:58597/
+```
+
+Run the YOLO annotation-image downloader once:
+
+```powershell
+python pipe_end_detection\capture_pipe_end_dataset.py
+```
+
+Run the YOLO annotation-image downloader continuously every 90 minutes:
+
+```powershell
+python pipe_end_detection\capture_pipe_end_dataset.py --loop --interval-minutes 90
+```
+
+Current background downloader status as of 2026-05-17:
+
+- started locally as `python.exe pipe_end_detection\capture_pipe_end_dataset.py --loop --interval-minutes 90`;
+- observed PID at startup: `11792`;
+- logs:
+  - `pipe_end_detection/logs/capture_pipe_end_dataset_current.out.log`;
+  - `pipe_end_detection/logs/capture_pipe_end_dataset_current.err.log`;
+- first retry on 2026-05-17 failed because `10.3.2.151` timed out on `/axis-cgi/param.cgi`;
+- this does not kill the loop; it sleeps and retries after the interval;
+- if captures keep failing, verify that the computer is on the camera network and can reach `10.3.2.151`.
+
+Check whether the downloader is running:
+
+```powershell
+Get-CimInstance Win32_Process |
+  Where-Object { $_.Name -match '^python' -and $_.CommandLine -match 'capture_pipe_end_dataset\.py' } |
+  Select-Object ProcessId,Name,CommandLine
+```
+
+### 26.5 Current Data State
+
+Last checked before the 2026-05-17 push:
+
+- MVP capture history had `12` valid paired runs;
+- latest valid MVP run was `20260512_130549`;
+- YOLO annotation pool had:
+  - `125` cam151 images;
+  - `125` cam152 images;
+  - `94` label files per camera;
+  - `59` non-empty cam151 labels;
+  - cam152 labels still effectively empty;
+- `28` new annotation images (`14` pairs) from 2026-05-11 to 2026-05-12 were pushed with Git LFS.
+
+### 26.6 Known Problems / Next Decisions
+
+Known technical issues:
+
+- camera homography can drift because the physical camera view moved over time;
+- cam152 homography was especially suspect in recent notebook checks;
+- the pipeline currently assumes the active default ROI/homography is good enough unless manually changed;
+- the downloader may fail if the machine is not on the camera network;
+- YOLO matching is improved but should still be validated on more recent camera captures.
+
+Recommended next work:
+
+- keep collecting wide, zero-zoom annotation images when camera network is reachable;
+- continue annotating especially cam152, because cam152 labels are currently empty;
+- retrain YOLO after enough new annotations are saved;
+- validate YOLO detection in `notebooks/pipe_end_yolo_cam151_cam152.ipynb`;
+- rerun MVP processing on recent captures and inspect `Diagram` vs `Full View`;
+- if homography drift remains large, create/save a new homography profile and make the MVP choose the right profile by date/run.
+
