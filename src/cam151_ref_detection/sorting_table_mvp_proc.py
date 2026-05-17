@@ -27,6 +27,12 @@ from .capture_history import (
     load_latest_capture_run_manifest,
 )
 from .homography_preview import build_homography_preview
+from .homography_profiles import (
+    list_profiles as list_homography_profiles,
+    resolve_profile_path as resolve_homography_profile_path,
+    save_homography_profile,
+    set_default_profile as set_default_homography_profile,
+)
 from .roi_store import load_rois
 from .tube_matcher_proc import (
     _load_dataset,
@@ -662,7 +668,7 @@ def _build_initial_state(
         detection_source = str(current_run.get("detection_source") or "")
         pipe_end_yolo = dict(current_run.get("pipe_end_yolo") or {})
     return {
-        "title": "HK - Sorting Table",
+            "title": "Sorting Table",
         "generated_at": str(match_payload.get("generated_at") or _iso_now()),
         "match_source": str(match_payload.get("_input_path") or "latest"),
         "history_url": "/history",
@@ -702,6 +708,128 @@ def _framing_calibrator_html(initial_state: dict[str, Any]) -> str:
     html_path = Path(__file__).with_name("framing_calibrator.html")
     html_template = html_path.read_text(encoding="utf-8")
     return html_template.replace("__CALIBRATOR_STATE__", json.dumps(initial_state, ensure_ascii=False))
+
+
+def _homography_points_for_editor(roi_path: Path) -> dict[str, list[float]]:
+    payload = load_rois(roi_path)
+    points = payload.get("src_points_override")
+    labels = ("TL", "TR", "BL", "BR")
+    if not isinstance(points, list) or len(points) != 4:
+        return {}
+    result: dict[str, list[float]] = {}
+    for label, point in zip(labels, points):
+        try:
+            result[label] = [float(point[0]), float(point[1])]
+        except Exception:
+            return {}
+    return result
+
+
+def _homography_editor_html(initial_state: dict[str, Any]) -> str:
+    payload = json.dumps(initial_state, ensure_ascii=False)
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Homography Editor</title>
+<style>
+*{{box-sizing:border-box}}
+html,body{{margin:0;height:100%;font-family:Arial,Helvetica,sans-serif;background:#101216;color:#edf2f7}}
+body{{display:grid;grid-template-columns:minmax(0,1fr)380px;grid-template-rows:64px minmax(0,1fr)}}
+header{{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;border-bottom:1px solid #2a3038;background:#171a20}}
+h1{{margin:0;font-size:18px}}.actions{{display:flex;gap:8px;flex-wrap:wrap;align-items:center}}
+button,select,input{{border:1px solid #3a4450;border-radius:8px;background:#222832;color:#f5f7fa;padding:8px 10px;font-size:13px}}
+button{{cursor:pointer}}button.primary{{border-color:#1f9d55;background:#1f7a46}}button.secondary{{background:#2d3440}}button.danger{{border-color:#9f3a3a;background:#6b2a2a}}button:disabled{{opacity:.45;cursor:not-allowed}}
+main{{min-width:0;min-height:0;display:grid;grid-template-rows:minmax(0,1fr)34px;background:#0d0f13}}
+#stage{{width:100%;height:100%;display:block;background:#0b0d10;touch-action:none;cursor:crosshair}}
+#status{{padding:8px 12px;border-top:1px solid #2a3038;background:#171a20;color:#d7dee8;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+aside{{min-height:0;overflow:auto;border-left:1px solid #2a3038;background:#151920;padding:12px}}
+.panel{{border:1px solid #2c3440;border-radius:10px;background:#1b2028;padding:10px;margin-bottom:12px}}
+.panel h2{{margin:0 0 8px;font-size:13px;text-transform:uppercase;color:#9fb0c2;letter-spacing:.06em}}
+#preview{{width:100%;height:auto;display:block;border:1px solid #303844;background:#0d0f13}}
+.field{{display:grid;gap:6px;margin-bottom:10px}}label{{font-size:12px;color:#b7c2ce}}select,input{{width:100%}}
+.point-list{{display:grid;gap:8px}}.point-row{{display:grid;grid-template-columns:34px minmax(0,1fr);gap:8px;align-items:center;padding:8px;border-radius:6px;background:#222832}}
+.badge{{width:26px;height:26px;display:grid;place-items:center;border-radius:50%;font-weight:700;color:#0d0f13;font-size:12px}}
+.coords{{min-width:0;font-size:12px;color:#d7dee8;line-height:1.35;overflow-wrap:anywhere}}.coords strong{{display:block;color:#fff;font-size:13px}}
+.help,.meta{{margin:0;color:#b7c2ce;font-size:12px;line-height:1.45;overflow-wrap:anywhere}}
+@media(max-width:980px){{body{{grid-template-columns:1fr;grid-template-rows:auto minmax(62vh,1fr)auto}}aside{{border-left:0;border-top:1px solid #2a3038;max-height:38vh}}header{{align-items:flex-start;flex-direction:column}}}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Homography Editor</h1>
+  <div class="actions">
+    <button id="fitBtn">Fit</button>
+    <button id="deleteBtn">Delete last</button>
+    <button id="clearBtn">Clear</button>
+    <button id="defaultBtn" class="secondary">Use selected as default</button>
+    <button id="saveBtn" class="primary" disabled>Save new profile + default</button>
+  </div>
+</header>
+<main><canvas id="stage"></canvas><div id="status">Loading image...</div></main>
+<aside>
+  <section class="panel">
+    <h2>Run</h2>
+    <p class="meta" id="runMeta"></p>
+  </section>
+  <section class="panel">
+    <h2>Profile</h2>
+    <div class="field"><label for="profileSelect">Load previous TOML</label><select id="profileSelect"></select></div>
+    <div class="field"><label for="profileName">Optional name for new save</label><input id="profileName" placeholder="morning_cam152, fixed_shift..."></div>
+  </section>
+  <section class="panel"><h2>Warp preview</h2><canvas id="preview" width="320" height="460"></canvas></section>
+  <section class="panel"><h2>Points</h2><div id="pointList" class="point-list"></div></section>
+  <section class="panel"><h2>Controls</h2><p class="help">Left click places the next point. Drag a point to move it. Mouse wheel zooms. Shift, middle click, or right click pans. Enter saves. Delete removes last point.</p></section>
+</aside>
+<script>
+const INITIAL={payload};
+const LABELS=["TL","TR","BL","BR"],NAMES={{TL:"P1 top-left",TR:"P2 top-right",BL:"P3 bottom-left",BR:"P4 bottom-right"}},COLORS={{TL:"#00ff44",TR:"#ffcc00",BL:"#ff4444",BR:"#44aaff"}};
+const stage=document.getElementById("stage"),ctx=stage.getContext("2d"),preview=document.getElementById("preview"),pctx=preview.getContext("2d");
+const statusEl=document.getElementById("status"),saveBtn=document.getElementById("saveBtn"),pointList=document.getElementById("pointList"),profileSelect=document.getElementById("profileSelect");
+const img=new Image(),srcCanvas=document.createElement("canvas"),srcCtx=srcCanvas.getContext("2d",{{willReadFrequently:true}});
+let srcPixels=null,drag=null,previewDirty=false;
+const state={{pts:{{}},nextIdx:0,zoom:1,offsetX:0,offsetY:0,fitted:false,history:[]}};
+for(const l of LABELS){{const p=INITIAL.existing[l];if(Array.isArray(p)&&p.length>=2)state.pts[l]={{x:Number(p[0]),y:Number(p[1])}};}}
+state.nextIdx=nextIndex();
+document.getElementById("runMeta").innerHTML=`Camera: <strong>cam${{INITIAL.camera}}</strong><br>Run: <strong>${{INITIAL.run_id||"latest"}}</strong><br>Image: ${{INITIAL.image.name}}<br>Selected TOML: ${{INITIAL.selected_profile_path}}`;
+profileSelect.innerHTML=(INITIAL.profiles||[]).map(p=>`<option value="${{p.profile_id}}" ${{p.profile_id===INITIAL.selected_profile_id?"selected":""}}>${{p.is_current?"* ":""}}${{p.label}} - ${{p.image_name||""}}</option>`).join("");
+profileSelect.onchange=()=>{{const params=new URLSearchParams(location.search);params.set("camera",INITIAL.camera);if(INITIAL.run_id)params.set("run_id",INITIAL.run_id);params.set("profile_id",profileSelect.value);location.href="/homography-editor?"+params.toString();}};
+function allPlaced(){{return LABELS.every(l=>state.pts[l]);}}
+function nextIndex(){{const i=LABELS.findIndex(l=>!state.pts[l]);return i>=0?i:state.nextIdx%LABELS.length;}}
+function clamp(p){{return{{x:Math.max(0,Math.min(img.naturalWidth,Number(p.x))),y:Math.max(0,Math.min(img.naturalHeight,Number(p.y)))}};}}
+function canvasPoint(e){{const r=stage.getBoundingClientRect();return{{x:e.clientX-r.left,y:e.clientY-r.top}};}}
+function i2c(p){{return{{x:p.x*state.zoom+state.offsetX,y:p.y*state.zoom+state.offsetY}};}}
+function c2i(p){{return{{x:(p.x-state.offsetX)/state.zoom,y:(p.y-state.offsetY)/state.zoom}};}}
+function setStatus(t,err=false){{statusEl.textContent=t;statusEl.style.color=err?"#ff8585":"#d7dee8";}}
+function fitImage(){{if(!img.naturalWidth||!stage.width||!stage.height)return;const s=Math.min(stage.width/img.naturalWidth,stage.height/img.naturalHeight,1);state.zoom=Math.max(.02,s);state.offsetX=(stage.width-img.naturalWidth*state.zoom)/2;state.offsetY=(stage.height-img.naturalHeight*state.zoom)/2;state.fitted=true;draw();}}
+function resizeStage(){{const r=stage.getBoundingClientRect();stage.width=Math.max(1,Math.round(r.width));stage.height=Math.max(1,Math.round(r.height));state.fitted?draw():fitImage();}}
+function hitPoint(cp){{let best=null,bd=18;for(const l of LABELS){{const p=state.pts[l];if(!p)continue;const d=i2c(p),dist=Math.hypot(cp.x-d.x,cp.y-d.y);if(dist<bd){{bd=dist;best=l;}}}}return best;}}
+function placePoint(l,p){{state.pts[l]=clamp(p);state.history.push(l);state.nextIdx=(LABELS.indexOf(l)+1)%LABELS.length;if(!allPlaced())state.nextIdx=nextIndex();markPreviewDirty();draw();}}
+function deleteLast(){{let l=state.history.pop();if(!l||!state.pts[l])l=LABELS[(state.nextIdx+LABELS.length-1)%LABELS.length];if(l){{delete state.pts[l];state.nextIdx=LABELS.indexOf(l);}}markPreviewDirty();draw();}}
+function clearPoints(){{state.pts={{}};state.history=[];state.nextIdx=0;markPreviewDirty();draw();}}
+function drawPointList(){{pointList.innerHTML="";for(const l of LABELS){{const row=document.createElement("div"),b=document.createElement("div"),c=document.createElement("div"),p=state.pts[l];row.className="point-row";b.className="badge";b.style.background=COLORS[l];b.textContent=l;c.className="coords";c.innerHTML=p?`<strong>${{NAMES[l]}}</strong>x=${{p.x.toFixed(1)}}, y=${{p.y.toFixed(1)}}`:`<strong>${{NAMES[l]}}</strong>not set`;row.append(b,c);pointList.appendChild(row);}}}}
+function draw(){{ctx.clearRect(0,0,stage.width,stage.height);ctx.fillStyle="#0b0d10";ctx.fillRect(0,0,stage.width,stage.height);if(img.complete&&img.naturalWidth)ctx.drawImage(img,state.offsetX,state.offsetY,img.naturalWidth*state.zoom,img.naturalHeight*state.zoom);if(allPlaced()){{const tl=i2c(state.pts.TL),tr=i2c(state.pts.TR),bl=i2c(state.pts.BL),br=i2c(state.pts.BR);ctx.save();ctx.strokeStyle="rgba(255,255,255,.78)";ctx.lineWidth=2;ctx.setLineDash([6,4]);ctx.beginPath();ctx.moveTo(tl.x,tl.y);ctx.lineTo(tr.x,tr.y);ctx.lineTo(br.x,br.y);ctx.lineTo(bl.x,bl.y);ctx.closePath();ctx.stroke();ctx.restore();}}for(const l of LABELS){{const p=state.pts[l];if(!p)continue;const d=i2c(p);ctx.save();ctx.strokeStyle=COLORS[l];ctx.fillStyle=COLORS[l];ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(d.x-10,d.y);ctx.lineTo(d.x+10,d.y);ctx.moveTo(d.x,d.y-10);ctx.lineTo(d.x,d.y+10);ctx.stroke();ctx.beginPath();ctx.arc(d.x,d.y,5,0,Math.PI*2);ctx.stroke();ctx.font="700 13px Arial,Helvetica,sans-serif";ctx.fillText(NAMES[l],d.x+12,d.y-10);ctx.restore();}}saveBtn.disabled=!allPlaced();drawPointList();if(allPlaced())setStatus("4/4 points ready. Save to create a TOML profile and make it default.");else{{const l=LABELS[state.nextIdx];setStatus(`Next: ${{NAMES[l]}} (${{Object.keys(state.pts).length}}/4)`);}}}}
+function markPreviewDirty(){{if(previewDirty)return;previewDirty=true;requestAnimationFrame(()=>{{previewDirty=false;drawPreview();}});}}
+function drawPreview(){{pctx.clearRect(0,0,preview.width,preview.height);pctx.fillStyle="#0d0f13";pctx.fillRect(0,0,preview.width,preview.height);if(!allPlaced()||!srcPixels){{pctx.fillStyle="#9fb0c2";pctx.font="14px Arial";pctx.textAlign="center";pctx.fillText(`${{Object.keys(state.pts).length}}/4 points`,preview.width/2,preview.height/2);pctx.textAlign="start";return;}}const dst=[{{x:0,y:0}},{{x:preview.width-1,y:0}},{{x:0,y:preview.height-1}},{{x:preview.width-1,y:preview.height-1}}],src=[state.pts.TL,state.pts.TR,state.pts.BL,state.pts.BR],h=solveHomography(dst,src);if(!h)return;const out=pctx.createImageData(preview.width,preview.height),sd=srcPixels.data,sw=srcPixels.width,sh=srcPixels.height;for(let y=0;y<preview.height;y++){{for(let x=0;x<preview.width;x++){{const den=h[6]*x+h[7]*y+1,sx=(h[0]*x+h[1]*y+h[2])/den,sy=(h[3]*x+h[4]*y+h[5])/den,oi=(y*preview.width+x)*4,ix=Math.round(sx),iy=Math.round(sy);if(ix>=0&&ix<sw&&iy>=0&&iy<sh){{const si=(iy*sw+ix)*4;out.data[oi]=sd[si];out.data[oi+1]=sd[si+1];out.data[oi+2]=sd[si+2];out.data[oi+3]=255;}}}}pctx.putImageData(out,0,0);}}
+function solveHomography(from,to){{const a=[],b=[];for(let i=0;i<4;i++){{const x=from[i].x,y=from[i].y,u=to[i].x,v=to[i].y;a.push([x,y,1,0,0,0,-u*x,-u*y]);b.push(u);a.push([0,0,0,x,y,1,-v*x,-v*y]);b.push(v);}}const s=gauss(a,b);return s?[s[0],s[1],s[2],s[3],s[4],s[5],s[6],s[7],1]:null;}}
+function gauss(a,b){{const n=b.length;for(let c=0;c<n;c++){{let p=c;for(let r=c+1;r<n;r++)if(Math.abs(a[r][c])>Math.abs(a[p][c]))p=r;if(Math.abs(a[p][c])<1e-10)return null;if(p!==c){{[a[p],a[c]]=[a[c],a[p]];[b[p],b[c]]=[b[c],b[p]];}}const d=a[c][c];for(let j=c;j<n;j++)a[c][j]/=d;b[c]/=d;for(let r=0;r<n;r++){{if(r===c)continue;const f=a[r][c];for(let j=c;j<n;j++)a[r][j]-=f*a[c][j];b[r]-=f*b[c];}}}}return b;}}
+stage.addEventListener("pointerdown",e=>{{e.preventDefault();stage.setPointerCapture(e.pointerId);const cp=canvasPoint(e);if(e.button===1||e.button===2||e.shiftKey||e.altKey){{drag={{type:"pan",sx:e.clientX,sy:e.clientY,ox:state.offsetX,oy:state.offsetY}};return;}}if(e.button!==0)return;const hit=hitPoint(cp);if(hit){{drag={{type:"point",label:hit}};return;}}const ip=c2i(cp);if(ip.x>=0&&ip.x<=img.naturalWidth&&ip.y>=0&&ip.y<=img.naturalHeight)placePoint(LABELS[state.nextIdx],ip);}});
+stage.addEventListener("pointermove",e=>{{if(!drag)return;e.preventDefault();if(drag.type==="pan"){{state.offsetX=drag.ox+e.clientX-drag.sx;state.offsetY=drag.oy+e.clientY-drag.sy;draw();return;}}state.pts[drag.label]=clamp(c2i(canvasPoint(e)));markPreviewDirty();draw();}});
+function stopDrag(e){{if(stage.hasPointerCapture(e.pointerId))stage.releasePointerCapture(e.pointerId);drag=null;}}stage.addEventListener("pointerup",stopDrag);stage.addEventListener("pointercancel",stopDrag);stage.addEventListener("contextmenu",e=>e.preventDefault());
+stage.addEventListener("wheel",e=>{{e.preventDefault();const cp=canvasPoint(e),before=c2i(cp),f=e.deltaY<0?1.12:1/1.12;state.zoom=Math.max(.02,Math.min(30,state.zoom*f));state.offsetX=cp.x-before.x*state.zoom;state.offsetY=cp.y-before.y*state.zoom;draw();}},{{passive:false}});
+function pointsPayload(){{const pts={{}};for(const l of LABELS)pts[l]=[state.pts[l].x,state.pts[l].y];return pts;}}
+async function postJson(url,payload){{const r=await fetch(url,{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify(payload)}});const data=await r.json().catch(()=>({{}}));if(!r.ok||data.ok===false)throw new Error(data.error||"Request failed.");return data;}}
+async function saveProfile(){{if(!allPlaced())return;saveBtn.disabled=true;setStatus("Saving homography profile...");try{{const data=await postJson("/api/homography-profiles",{{camera:INITIAL.camera,run_id:INITIAL.run_id,base_profile_id:INITIAL.selected_profile_id,name:document.getElementById("profileName").value,points:pointsPayload(),set_as_default:true}});setStatus(`Saved ${{data.profile_id}} and set as default.`);setTimeout(()=>location.href=`/homography-editor?camera=${{INITIAL.camera}}&run_id=${{INITIAL.run_id||""}}&profile_id=${{data.profile_id}}`,800);}}catch(e){{saveBtn.disabled=false;setStatus(e.message||String(e),true);}}}}
+async function setSelectedDefault(){{setStatus("Setting selected profile as default...");try{{const data=await postJson("/api/homography-profiles/default",{{camera:INITIAL.camera,profile_id:profileSelect.value}});setStatus(`Default updated from ${{data.profile_id}}.`);}}catch(e){{setStatus(e.message||String(e),true);}}}}
+document.getElementById("fitBtn").onclick=fitImage;document.getElementById("deleteBtn").onclick=deleteLast;document.getElementById("clearBtn").onclick=clearPoints;saveBtn.onclick=saveProfile;document.getElementById("defaultBtn").onclick=setSelectedDefault;
+window.addEventListener("keydown",e=>{{if(e.key==="Enter"&&allPlaced())saveProfile();if(e.key==="Delete"||e.key==="Backspace"){{e.preventDefault();deleteLast();}}}});
+window.addEventListener("resize",resizeStage);
+img.onload=()=>{{srcCanvas.width=img.naturalWidth;srcCanvas.height=img.naturalHeight;srcCtx.drawImage(img,0,0);srcPixels=srcCtx.getImageData(0,0,img.naturalWidth,img.naturalHeight);resizeStage();markPreviewDirty();}};
+img.onerror=()=>setStatus("Could not load image.",true);img.src=INITIAL.image.url;
+</script>
+</body>
+</html>"""
 
 
 def _baseline_image_path_for_side(side: str) -> Path:
@@ -931,6 +1059,57 @@ def start_sorting_table_mvp_server(
             "html_bytes": html.encode("utf-8"),
         }
 
+    def _manifest_image_path_for_side(manifest: dict[str, Any], side: str) -> Path:
+        side_key = _normalize_side(side)
+        camera_key = f"cam{side_key}"
+        camera_entry = dict((manifest.get("cameras") or {}).get(camera_key) or {})
+        image_path = _resolve_existing_path(camera_entry.get("image_path"))
+        if image_path is None:
+            raise FileNotFoundError(f"Run {manifest.get('run_id')!r} does not have a usable raw image for cam{side_key}.")
+        return image_path
+
+    def _build_homography_editor_snapshot(
+        *,
+        requested_run_id: str | None = None,
+        requested_camera: str | None = None,
+        requested_profile_id: str | None = None,
+    ) -> dict[str, Any]:
+        manifest = load_capture_run_manifest(requested_run_id) if requested_run_id else load_latest_capture_run_manifest()
+        if manifest is None:
+            raise FileNotFoundError("There are no captured runs available for homography editing.")
+        run_id = str(manifest.get("run_id") or "").strip()
+        side_key = _normalize_side(requested_camera or "152")
+        profile_id = str(requested_profile_id or "current_default").strip() or "current_default"
+        image_path = _manifest_image_path_for_side(manifest, side_key)
+        roi_path = resolve_homography_profile_path(side_key, profile_id)
+        width, height = _load_image_dimensions(image_path)
+        asset_namespace = _asset_token(f"homography_{run_id}_{side_key}", fallback="homography_editor")
+        image_url = f"/asset/{asset_namespace}/cam{side_key}{image_path.suffix.lower()}"
+        initial_state = {
+            "title": "Homography Editor",
+            "generated_at": _iso_now(),
+            "latest_url": "/",
+            "history_url": "/history",
+            "camera": side_key,
+            "run_id": run_id,
+            "selected_profile_id": profile_id,
+            "selected_profile_path": str(roi_path),
+            "profiles": list_homography_profiles(side_key),
+            "existing": _homography_points_for_editor(roi_path),
+            "image": {
+                "name": image_path.name,
+                "url": image_url,
+                "width": width,
+                "height": height,
+                "resolved_path": str(image_path),
+            },
+        }
+        html = _homography_editor_html(initial_state)
+        return {
+            "asset_map": {image_url: (image_path.read_bytes(), _image_mime_type(image_path))},
+            "html_bytes": html.encode("utf-8"),
+        }
+
     runtime_box: dict[str, Any] = _build_runtime_snapshot()
     asset_cache.update(runtime_box.get("asset_map") or {})
 
@@ -954,8 +1133,37 @@ def start_sorting_table_mvp_server(
         def _send_json(self, payload: dict[str, Any], status: int = 200) -> None:
             self._send_bytes(json.dumps(payload, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8", status)
 
+        def _read_json_body(self) -> dict[str, Any]:
+            try:
+                length = int(self.headers.get("Content-Length") or "0")
+            except ValueError:
+                length = 0
+            raw = self.rfile.read(max(0, length)).decode("utf-8") if length else ""
+            payload = json.loads(raw) if raw.strip() else {}
+            if not isinstance(payload, dict):
+                raise ValueError("JSON body must be an object.")
+            return payload
+
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
+            if parsed.path == "/homography-editor":
+                query = parse_qs(parsed.query)
+                requested_run_id = str((query.get("run_id") or [""])[0]).strip() or None
+                requested_camera = str((query.get("camera") or [""])[0]).strip() or None
+                requested_profile_id = str((query.get("profile_id") or [""])[0]).strip() or None
+                try:
+                    snapshot = _build_homography_editor_snapshot(
+                        requested_run_id=requested_run_id,
+                        requested_camera=requested_camera,
+                        requested_profile_id=requested_profile_id,
+                    )
+                except Exception as exc:
+                    self._send_json({"error": str(exc)}, status=500)
+                    return
+                with runtime_lock:
+                    asset_cache.update(snapshot.get("asset_map") or {})
+                self._send_bytes(snapshot["html_bytes"], "text/html; charset=utf-8")
+                return
             if parsed.path == "/framing-calibrator":
                 requested_run_id = str((parse_qs(parsed.query).get("run_id") or [""])[0]).strip() or None
                 requested_camera = str((parse_qs(parsed.query).get("camera") or [""])[0]).strip() or None
@@ -1011,6 +1219,39 @@ def start_sorting_table_mvp_server(
 
         def do_POST(self) -> None:
             parsed = urlparse(self.path)
+            if parsed.path == "/api/homography-profiles":
+                try:
+                    payload = self._read_json_body()
+                    side_key = _normalize_side(payload.get("camera"))
+                    run_id = str(payload.get("run_id") or "").strip() or None
+                    manifest = load_capture_run_manifest(run_id) if run_id else load_latest_capture_run_manifest()
+                    if manifest is None:
+                        raise FileNotFoundError("There are no captured runs available for homography editing.")
+                    image_path = _manifest_image_path_for_side(manifest, side_key)
+                    result = save_homography_profile(
+                        side=side_key,
+                        image_path=image_path,
+                        src_points=payload.get("points"),
+                        base_profile_id=str(payload.get("base_profile_id") or payload.get("profile_id") or "current_default").strip(),
+                        name=str(payload.get("name") or "").strip(),
+                        set_as_default=bool(payload.get("set_as_default", True)),
+                    )
+                    self._send_json({"ok": True, **result, "profiles": list_homography_profiles(side_key)})
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, status=400)
+                return
+            if parsed.path == "/api/homography-profiles/default":
+                try:
+                    payload = self._read_json_body()
+                    side_key = _normalize_side(payload.get("camera"))
+                    profile_id = str(payload.get("profile_id") or "").strip()
+                    if not profile_id:
+                        raise ValueError("Missing profile_id.")
+                    result = set_default_homography_profile(side_key, profile_id)
+                    self._send_json({"ok": True, **result, "profiles": list_homography_profiles(side_key)})
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, status=400)
+                return
             if parsed.path != "/api/capture":
                 self._send_json({"error": "not found"}, status=404)
                 return

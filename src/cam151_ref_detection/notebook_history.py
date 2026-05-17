@@ -66,6 +66,10 @@ def _default_artifact_match_dir() -> Path:
     return repo_root() / "artifacts" / "tube_matching"
 
 
+def _pipe_end_capture_runs_dir() -> Path:
+    return repo_root() / "pipe_end_detection" / "captures" / "runs"
+
+
 def _resolve_capture_manifest_path(path_like: Any) -> Path | None:
     raw = str(path_like or "").strip()
     if not raw:
@@ -199,6 +203,16 @@ def list_notebook_history_entries(side: Any, *, include_latest_capture: bool = F
             latest_selection = _build_capture_selection(latest_manifest, side_key)
             if latest_selection is not None and latest_selection.selection_id not in seen_ids:
                 entries.append(latest_selection)
+                seen_ids.add(latest_selection.selection_id)
+
+    pipe_end_runs_dir = _pipe_end_capture_runs_dir()
+    if pipe_end_runs_dir.exists():
+        for manifest_path in sorted(pipe_end_runs_dir.glob("*/manifest.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+            selection = _build_capture_selection(_read_json(manifest_path), side_key)
+            if selection is None or selection.selection_id in seen_ids:
+                continue
+            seen_ids.add(selection.selection_id)
+            entries.append(selection)
 
     for match_path in sorted(_default_artifact_match_dir().glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
         selection = _build_artifact_selection(match_path, side_key)
@@ -236,6 +250,13 @@ def resolve_notebook_history_selection(side: Any, selection_id: str) -> Notebook
         return selection
 
     manifest_path = repo_root() / "artifacts" / "capture_history" / wanted / "manifest.json"
+    if manifest_path.exists():
+        selection = _build_capture_selection(_read_json(manifest_path), side_key)
+        if selection is None:
+            raise FileNotFoundError(f"La corrida {wanted!r} no tiene imagen utilizable para notebook.")
+        return selection
+
+    manifest_path = _pipe_end_capture_runs_dir() / wanted / "manifest.json"
     if manifest_path.exists():
         selection = _build_capture_selection(_read_json(manifest_path), side_key)
         if selection is None:

@@ -2,7 +2,7 @@ image_name = "cam_151_202604022.jpeg"
 updated_at = "2026-04-22T00:00:00"
 overview_path = ""
 src_points_override = [[992.813, 116.674], [1154.209, 113.284], [819.618, 1411.319], [1256.392, 1410.187]]
-dst_rect_override = [-63.667, -166.088, 1122.737, 1335.560]
+dst_rect_override = [-63.667, -126.088, 1122.737, 1375.560]
 
 [[points]]
 id = "point_01"

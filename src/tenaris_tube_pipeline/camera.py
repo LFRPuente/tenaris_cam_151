@@ -81,7 +81,7 @@ def _reference_line_for_export(result: TubeDetectionPreviewResult) -> dict[str, 
 
 
 def _pipe_end_yolo_enabled() -> bool:
-    raw = str(os.environ.get("PIPE_END_YOLO_ENABLED", "0")).strip().lower()
+    raw = str(os.environ.get("PIPE_END_YOLO_ENABLED", "1")).strip().lower()
     return raw in {"1", "true", "yes", "on", "yolo", "pipe_end"}
 
 
@@ -142,6 +142,16 @@ def build_tube_measurements(result: TubeDetectionPreviewResult) -> list[dict[str
             "offset_px": offset_px,
             "distance_in": distance_in,
         }
+        for passthrough_key in (
+            "confidence",
+            "source",
+            "box_xyxy",
+            "box_xywh",
+            "yolo_box_center",
+            "refined_pipe_end",
+        ):
+            if passthrough_key in item:
+                measurement[passthrough_key] = item[passthrough_key]
         if result.processing_mode == "cam152":
             measurement["relative_position"] = "before" if offset_px < 0 else "after"
         measurements.append(measurement)
@@ -196,7 +206,9 @@ def process_camera(config: CameraPipelineConfig, outputs: PipelineOutputConfig) 
         extra_meta["pipe_end_yolo"] = {
             "enabled": True,
             "model_path": str(yolo_result.model_path),
+            "raw_prediction_count": int(yolo_result.raw_prediction_count),
             "prediction_count": int(yolo_result.count),
+            "postprocess": dict(yolo_result.postprocess or {}),
             "predictions_path": str(yolo_result.predictions_path),
             "overlay_path": str(yolo_result.overlay_path),
             "imgsz": int(yolo_result.imgsz),

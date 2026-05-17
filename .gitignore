@@ -16,6 +16,9 @@ dataset_probe_*/
 predictions/
 tmp_*/
 *.pt
+!models/
+!models/pipe_end_active/
+!models/pipe_end_active/best.pt
 server_stdout_cam_*.log
 server_stderr_cam_*.log
 *.log

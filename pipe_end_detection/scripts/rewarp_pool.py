@@ -13,8 +13,9 @@ CAPTURES_DIR = REPO_ROOT / "pipe_end_detection" / "captures" / "runs"
 ANNOT_ROOT = REPO_ROOT / "pipe_end_detection" / "annotation_pool"
 TOML_PATH = REPO_ROOT / "manual_rois" / "_current_defaults" / "cam_151_current_default_rois.toml"
 
-# Old dst_rect (before the ROI picker change)
-OLD_RECT = [-61.333, -157.988, 1120.232, 1335.930]
+# Current cam151 dst_rect. Update this only when intentionally migrating labels
+# from a previous crop to a new TOML crop.
+OLD_RECT = [-63.667, -126.088, 1122.737, 1375.560]
 
 
 def dist(a: list, b: list) -> float:
@@ -124,14 +125,14 @@ def main() -> None:
                     label_f.write_text(corrected, encoding="utf-8")
                     label_fix_count = len([l for l in corrected.splitlines() if l.strip()])
                     label_fixed += 1
-                    print(f"  ✓ {pool_img.name}  ({label_fix_count} boxes corregidos)")
+                    print(f"  OK {pool_img.name}  ({label_fix_count} boxes corregidos)")
                 else:
-                    print(f"  ✓ {pool_img.name}  (sin label)")
+                    print(f"  OK {pool_img.name}  (sin label)")
             else:
-                print(f"  ✓ {pool_img.name}  (sin label)")
+                print(f"  OK {pool_img.name}  (sin label)")
             ok += 1
         except Exception as exc:
-            print(f"  ✗ {raw_path.name}: {exc}", file=sys.stderr)
+            print(f"  ERROR {raw_path.name}: {exc}", file=sys.stderr)
 
     print()
     print(f"Re-warpeados: {rewarped}  |  Labels corregidos: {label_fixed}  |  Sin pool image: {skipped}")

@@ -808,7 +808,9 @@ def _pipe_end_yolo_manifest_entry(result: Any) -> dict[str, Any]:
     return {
         "enabled": True,
         "model_path": _repo_rel(yolo_result.model_path),
+        "raw_prediction_count": int(getattr(yolo_result, "raw_prediction_count", 0) or 0),
         "prediction_count": int(yolo_result.count),
+        "postprocess": dict(getattr(yolo_result, "postprocess", None) or {}),
         "predictions_path": _repo_rel(yolo_result.predictions_path),
         "overlay_path": _repo_rel(yolo_result.overlay_path),
         "image_path": _repo_rel(yolo_result.image_path),

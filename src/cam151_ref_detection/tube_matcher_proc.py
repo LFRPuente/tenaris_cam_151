@@ -24,6 +24,11 @@ LEFT_REFERENCE_IN = 47.75
 RIGHT_REFERENCE_IN = 41.0
 MATCHER_INPUT_VERSION = 1
 MATCHER_RESULT_VERSION = 1
+BOTTOM_SLOT_OFFSET_HINT_BY_SIDE = {
+    # This is only a hint. The matcher evaluates nearby offsets and keeps the
+    # one that produces the best physical slot overlap with cam151.
+    "152": 1,
+}
 _DIST_VIS_CELL_HINT = "show_bgr(dist_vis"
 _WARP_ANALYSIS_CELL_HINT = "Warp recortado para analisis"
 _WARP_HOMOGRAPHY_CELL_HINT = "Homografia: warp rectificado"
@@ -384,46 +389,264 @@ def _build_result_row(row_number: int, left_item: dict[str, Any] | None, right_i
     }
 
 
-def build_match_rows(left_items: list[dict[str, Any]], right_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    left_queue = [deepcopy(item) for item in left_items if item.get("active")]
-    right_queue = [deepcopy(item) for item in right_items if item.get("active")]
+def _item_y_center(item: dict[str, Any]) -> float | None:
+    source = item.get("source_measurement")
+    if not isinstance(source, dict):
+        return None
+    return _float_or_none(source.get("y_center_warp"))
+
+
+def _item_box_height(item: dict[str, Any]) -> float | None:
+    source = item.get("source_measurement")
+    if not isinstance(source, dict):
+        return None
+    box_xywh = source.get("box_xywh")
+    if isinstance(box_xywh, list) and len(box_xywh) >= 4:
+        return _float_or_none(box_xywh[3])
+    box_xyxy = source.get("box_xyxy")
+    if isinstance(box_xyxy, list) and len(box_xyxy) >= 4:
+        y0 = _float_or_none(box_xyxy[1])
+        y1 = _float_or_none(box_xyxy[3])
+        if y0 is not None and y1 is not None:
+            return abs(float(y1) - float(y0))
+    return None
+
+
+def _ordered_active_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    active = [deepcopy(item) for item in items if item.get("active")]
+    if not active:
+        return []
+    if all(_item_y_center(item) is not None for item in active):
+        # Top-to-bottom order is ascending y.
+        return sorted(active, key=lambda item: float(_item_y_center(item) or 0.0))
+    return sorted(
+        active,
+        key=lambda item: (int(item.get("source_order", 0)), int(item.get("tube_idx", 0))),
+    )
+
+
+def _median(values: list[float]) -> float | None:
+    clean = sorted(float(value) for value in values if value is not None and float(value) > 1e-6)
+    if not clean:
+        return None
+    mid = len(clean) // 2
+    if len(clean) % 2:
+        return float(clean[mid])
+    return float(0.5 * (clean[mid - 1] + clean[mid]))
+
+
+def _estimate_vertical_pitch(ordered_items: list[dict[str, Any]]) -> float | None:
+    ys = [_item_y_center(item) for item in ordered_items]
+    if any(y is None for y in ys) or len(ys) < 2:
+        return None
+    gaps = [abs(float(ys[idx]) - float(ys[idx + 1])) for idx in range(len(ys) - 1)]
+    raw_pitch = _median(gaps)
+    if raw_pitch is None:
+        return None
+    robust_gaps = [gap for gap in gaps if 0.45 * raw_pitch <= gap <= 1.85 * raw_pitch]
+    return _median(robust_gaps) or raw_pitch
+
+
+def _expected_pitch_between(
+    lower_item: dict[str, Any],
+    upper_item: dict[str, Any],
+    fallback_pitch: float | None,
+) -> float | None:
+    heights = [
+        height
+        for height in (_item_box_height(lower_item), _item_box_height(upper_item))
+        if height is not None and float(height) > 1e-6
+    ]
+    box_pitch = _median([float(height) for height in heights])
+    if box_pitch is not None:
+        # In the warp, the YOLO box height tracks the apparent pipe thickness.
+        # Use it as the local pitch base so thick upper tubes do not create false skipped slots.
+        box_pitch = 1.05 * float(box_pitch)
+    if fallback_pitch is None or fallback_pitch <= 1e-6:
+        return box_pitch
+    if box_pitch is None:
+        return float(fallback_pitch)
+    return max(float(box_pitch), float(fallback_pitch))
+
+
+def _slot_increment_between(
+    lower_item: dict[str, Any],
+    upper_item: dict[str, Any],
+    fallback_pitch: float | None,
+) -> int:
+    lower_y = _item_y_center(lower_item)
+    upper_y = _item_y_center(upper_item)
+    if lower_y is None or upper_y is None:
+        return 1
+    gap = abs(float(lower_y) - float(upper_y))
+    expected_pitch = _expected_pitch_between(lower_item, upper_item, fallback_pitch)
+    if expected_pitch is None or expected_pitch <= 1e-6:
+        return 1
+    ratio = gap / float(expected_pitch)
+    # YOLO pipe-end boxes vary with perspective and thick tubes can create
+    # apparent 1.5x-2.1x gaps without a truly missing tube. Be conservative:
+    # duplicated boxes are removed earlier; slot gaps should only represent a
+    # clearly missing physical position.
+    if ratio < 2.30:
+        return 1
+    return max(1, int(round(ratio)))
+
+
+def _bottom_anchor_y(dataset: dict[str, Any] | None, ordered_items: list[dict[str, Any]], pitch: float | None) -> float | None:
+    if isinstance(dataset, dict):
+        extra_meta = dataset.get("extra_meta")
+        if isinstance(extra_meta, dict):
+            roi = extra_meta.get("detection_roi")
+            if isinstance(roi, list) and len(roi) >= 4:
+                y0 = _float_or_none(roi[1])
+                height = _float_or_none(roi[3])
+                if y0 is not None and height is not None:
+                    return float(y0 + height)
+            yolo_meta = extra_meta.get("pipe_end_yolo")
+            if isinstance(yolo_meta, dict):
+                image_size = yolo_meta.get("image_size")
+                if isinstance(image_size, dict):
+                    image_h = _float_or_none(image_size.get("height"))
+                    if image_h is not None:
+                        return float(image_h)
+    ys = [_item_y_center(item) for item in ordered_items]
+    clean_ys = [float(y) for y in ys if y is not None]
+    if not clean_ys:
+        return None
+    return float(max(clean_ys) + 0.5 * float(pitch or 0.0))
+
+
+def _assign_vertical_slots(items: list[dict[str, Any]], dataset: dict[str, Any] | None = None) -> list[tuple[int, dict[str, Any]]]:
+    ordered = _ordered_active_items(items)
+    if not ordered:
+        return []
+    if any(_item_y_center(item) is None for item in ordered):
+        return [(idx + 1, item) for idx, item in enumerate(ordered)]
+
+    pitch = _estimate_vertical_pitch(ordered)
+    if pitch is None or pitch <= 1e-6:
+        return [(idx + 1, item) for idx, item in enumerate(ordered)]
+
+    # Assign slots from the bottom green reference upward. A single global pitch
+    # is too brittle here because pipe-end boxes get taller toward the top of the warp.
+    # The local increment uses adjacent YOLO box heights to distinguish thick tubes
+    # from true missing detections.
+    slots: list[tuple[int, dict[str, Any]]] = []
+    slot = 1
+    previous_item: dict[str, Any] | None = None
+    for item in sorted(ordered, key=lambda value: float(_item_y_center(value) or 0.0), reverse=True):
+        if previous_item is not None:
+            slot += _slot_increment_between(previous_item, item, pitch)
+        slots.append((slot, item))
+        previous_item = item
+    return _drop_detached_top_slots(slots)
+
+
+def _drop_detached_top_slots(slots: list[tuple[int, dict[str, Any]]]) -> list[tuple[int, dict[str, Any]]]:
+    ordered = sorted(slots, key=lambda item: int(item[0]))
+    while len(ordered) >= 2:
+        top_slot = int(ordered[-1][0])
+        previous_slot = int(ordered[-2][0])
+        if top_slot - previous_slot < 4:
+            break
+        ordered.pop()
+    return ordered
+
+
+def _bottom_slot_offset(dataset: dict[str, Any] | None) -> int:
+    if not isinstance(dataset, dict):
+        return 0
+    try:
+        side = _normalize_side(dataset.get("side"))
+    except Exception:
+        return 0
+    return int(BOTTOM_SLOT_OFFSET_HINT_BY_SIDE.get(side, 0))
+
+
+def _best_slot_offset(
+    left_slots: list[tuple[int, dict[str, Any]]],
+    right_slots: list[tuple[int, dict[str, Any]]],
+    right_dataset: dict[str, Any] | None,
+) -> int:
+    left_set = {int(slot) for slot, _item in left_slots}
+    right_set = {int(slot) for slot, _item in right_slots}
+    if not left_set or not right_set:
+        return 0
+    hint = _bottom_slot_offset(right_dataset)
+    candidates = sorted({-2, -1, 0, 1, 2, hint, hint - 1, hint + 1})
+    best_offset = 0
+    best_score: tuple[int, int, int, int, int] | None = None
+    for offset in candidates:
+        adjusted_right = {slot + int(offset) for slot in right_set}
+        matched = len(left_set & adjusted_right)
+        unmatched = len(left_set ^ adjusted_right)
+        above_left = sum(1 for slot in adjusted_right if slot > max(left_set))
+        below_left = sum(1 for slot in adjusted_right if slot < min(left_set))
+        score = (
+            matched,
+            -unmatched,
+            -(above_left + below_left),
+            -abs(int(offset)),
+            1 if int(offset) == 0 else 0,
+        )
+        if best_score is None or score > best_score:
+            best_score = score
+            best_offset = int(offset)
+    return best_offset
+
+
+def build_match_rows(
+    left_items: list[dict[str, Any]],
+    right_items: list[dict[str, Any]],
+    *,
+    left_dataset: dict[str, Any] | None = None,
+    right_dataset: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    left_slots = _assign_vertical_slots(left_items, left_dataset)
+    right_slots = _assign_vertical_slots(right_items, right_dataset)
+    left_by_slot: dict[int, list[dict[str, Any]]] = {}
+    right_by_slot: dict[int, list[dict[str, Any]]] = {}
+    for slot, item in left_slots:
+        left_by_slot.setdefault(int(slot), []).append(item)
+    right_offset = _best_slot_offset(left_slots, right_slots, right_dataset)
+    for slot, item in right_slots:
+        right_by_slot.setdefault(int(slot) + right_offset, []).append(item)
+
     rows: list[dict[str, Any]] = []
-    left_pos = 0
-    right_pos = 0
     row_number = 1
+    for slot in sorted(set(left_by_slot) | set(right_by_slot), reverse=True):
+        left_queue = left_by_slot.get(slot, [])
+        right_queue = right_by_slot.get(slot, [])
+        while left_queue or right_queue:
+            left_item = left_queue.pop(0) if left_queue else None
+            right_item = right_queue.pop(0) if right_queue else None
 
-    while left_pos < len(left_queue) or right_pos < len(right_queue):
-        left_item = left_queue[left_pos] if left_pos < len(left_queue) else None
-        right_item = right_queue[right_pos] if right_pos < len(right_queue) else None
+            if left_item is not None and left_item.get("unmatched"):
+                rows.append(_build_result_row(row_number, left_item, None, "left_only_manual"))
+                row_number += 1
+                if right_item is not None:
+                    right_queue.insert(0, right_item)
+                continue
 
-        if left_item is not None and left_item.get("unmatched"):
-            rows.append(_build_result_row(row_number, left_item, None, "left_only_manual"))
+            if right_item is not None and right_item.get("unmatched"):
+                rows.append(_build_result_row(row_number, None, right_item, "right_only_manual"))
+                row_number += 1
+                if left_item is not None:
+                    left_queue.insert(0, left_item)
+                continue
+
+            if left_item is not None and right_item is not None:
+                rows.append(_build_result_row(row_number, left_item, right_item, "matched"))
+                row_number += 1
+                continue
+
+            if left_item is not None:
+                rows.append(_build_result_row(row_number, left_item, None, "left_only"))
+                row_number += 1
+                continue
+
+            rows.append(_build_result_row(row_number, None, right_item, "right_only"))
             row_number += 1
-            left_pos += 1
-            continue
-
-        if right_item is not None and right_item.get("unmatched"):
-            rows.append(_build_result_row(row_number, None, right_item, "right_only_manual"))
-            row_number += 1
-            right_pos += 1
-            continue
-
-        if left_item is not None and right_item is not None:
-            rows.append(_build_result_row(row_number, left_item, right_item, "matched"))
-            row_number += 1
-            left_pos += 1
-            right_pos += 1
-            continue
-
-        if left_item is not None:
-            rows.append(_build_result_row(row_number, left_item, None, "left_only"))
-            row_number += 1
-            left_pos += 1
-            continue
-
-        rows.append(_build_result_row(row_number, None, right_item, "right_only"))
-        row_number += 1
-        right_pos += 1
 
     return rows
 
@@ -434,7 +657,15 @@ def build_result_payload(
     left_items: list[dict[str, Any]],
     right_items: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    match_rows = build_match_rows(left_items, right_items)
+    left_slots = _assign_vertical_slots(left_items, left_dataset)
+    right_slots = _assign_vertical_slots(right_items, right_dataset)
+    right_offset = _best_slot_offset(left_slots, right_slots, right_dataset)
+    match_rows = build_match_rows(
+        left_items,
+        right_items,
+        left_dataset=left_dataset,
+        right_dataset=right_dataset,
+    )
     summary = {
         "matched": sum(1 for row in match_rows if row["match_status"] == "matched"),
         "left_only": sum(1 for row in match_rows if row["match_status"] in {"left_only", "left_only_manual"}),
@@ -471,6 +702,10 @@ def build_result_payload(
             },
         },
         "summary": summary,
+        "matching_strategy": "auto_vertical_slot_alignment_local_box_pitch_cam151_number_anchor",
+        "matching_debug": {
+            "cam152_slot_offset": int(right_offset),
+        },
         "left_items": left_items,
         "right_items": right_items,
         "rows": match_rows,

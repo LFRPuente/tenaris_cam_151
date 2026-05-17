@@ -379,9 +379,8 @@ def _detect_notebook_positions(warp_crop: np.ndarray) -> dict[str, Any]:
     probe_rows = np.asarray(raw_hit_rows, np.int32)
 
     x_start_list: list[dict[str, Any]] = []
-    tube_count_for_numbering = int(len(roi_boxes))
     for pos, (x_raw, x_smooth, y_probe) in enumerate(zip(raw_pick_x_positions, smoothed_x_positions, probe_rows)):
-        tube_idx = int(max(1, tube_count_for_numbering - pos))
+        tube_idx = int(pos + 1)
         x_start_list.append(
             {
                 "tube_idx": tube_idx,

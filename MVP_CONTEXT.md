@@ -774,3 +774,58 @@ Large data policy:
 - if all data must move through GitHub, use Git LFS or release artifacts;
 - labels and small metadata can be versioned normally when useful.
 
+---
+
+## 25. Current MVP / YOLO Handoff State (2026-05-17)
+
+This section supersedes the operational YOLO status in section 24 for the current local code state.
+
+Current detector rule:
+
+- MVP backend processing now enables YOLO `pipe_end` by default through `PIPE_END_YOLO_ENABLED=1`;
+- set `PIPE_END_YOLO_ENABLED=0` only when intentionally falling back to the classical notebook-style detector;
+- the active inference helper is `src/pipe_end_yolo/inference.py`;
+- the default YOLO confidence is `0.35`;
+- overlap suppression is `0.45`;
+- YOLO post-processing removes overlapping/contained boxes and vertical duplicate detections;
+- each accepted YOLO box is refined with local Sobel-X edge detection to estimate the true pipe end before length measurement.
+
+Current matching rule:
+
+- pair matching uses automatic vertical slot alignment from the bottom green reference upward;
+- slot assignment uses local YOLO box height / local pitch so thick tubes do not accidentally create skipped slots;
+- cam151 and cam152 are matched by the resulting physical slot index, not only by raw detection order.
+
+Current MVP UI rule:
+
+- the main view defaults to `Diagram`;
+- `Diagram` shows only the operator-facing tube diagram;
+- `Full View` restores the table, raw cam151 image, raw cam152 image, and the diagram for debugging;
+- the operator diagram currently shows pipes `1` through `10`;
+- pipe `1` is shown at the bottom and numbering increases upward;
+- tube drawing length uses `500 in` as the visual reference length;
+- colors are length-based:
+  - `<491 in`: red;
+  - `491-493 in`: orange;
+  - `493-496 in`: green;
+  - `>496 in`: yellow;
+  - unmatched / missing length: black.
+
+Current data counts checked on 2026-05-17:
+
+- MVP capture history has `12` valid paired runs;
+- latest valid MVP capture run is `20260512_130549`;
+- YOLO annotation pool has `125` cam151 images and `125` cam152 images;
+- YOLO annotation pool has `94` label files per camera;
+- cam151 has `59` non-empty label files;
+- cam152 label files are currently empty / not meaningfully annotated;
+- `28` new annotation-pool images (`14` pairs) from 2026-05-11 to 2026-05-12 were present locally before the 2026-05-17 push.
+
+Repository / GitHub policy as of this handoff:
+
+- the existing GitHub repo remains the active repository: `https://github.com/LFRPuente/tenaris_cam_151`;
+- no separate repo is required for the current MVP + YOLO workflow;
+- annotation-pool images are tracked with Git LFS;
+- the active inference model is expected at `models/pipe_end_active/best.pt`;
+- `models/pipe_end_active/best.pt` is also tracked with Git LFS so a second machine can run the current YOLO MVP without manually copying the model.
+

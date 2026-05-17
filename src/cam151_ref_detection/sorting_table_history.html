@@ -169,6 +169,12 @@ tbody td{
 tbody tr:nth-child(odd) td{
   background:#f2f2f2;
 }
+tbody tr.can-open{
+  cursor:pointer;
+}
+tbody tr.can-open:hover td{
+  background:#edf5fb;
+}
 tbody tr.latest td:first-child{
   background:#4e6f8a;
   color:#fff;
@@ -212,6 +218,10 @@ tbody tr.latest td:first-child{
   color:#fff8e7;
 }
 .row-actions .secondary{
+  background:#fff8e2;
+  color:#47391a;
+}
+.row-actions a.secondary{
   background:#fff8e2;
   color:#47391a;
 }
@@ -365,17 +375,22 @@ function renderHistory(){
   els.historyEmpty.hidden = true;
   els.historyBody.innerHTML = filtered.map((entry) => {
     const latestClass = entry.is_latest ? "latest" : "";
+    const openClass = entry.can_open && entry.run_url ? "can-open" : "";
+    const runUrl = entry.can_open && entry.run_url ? String(entry.run_url) : "";
     const errorLine = entry.error ? `<div style="margin-top:6px;color:#8c1f1f;font-size:12px">${entry.error}</div>` : "";
     const openAction = entry.can_open && entry.run_url
-      ? `<a href="${entry.run_url}">Open</a>`
+      ? `<a href="${escapeAttr(entry.run_url)}">Open Run</a>`
       : `<button type="button" class="secondary" disabled>No view</button>`;
     const runId = String(entry.run_id || "");
     const isCaptureRun = runId && !runId.startsWith("artifact:");
+    const homographyActions = isCaptureRun
+      ? `<a class="secondary" href="/homography-editor?run_id=${encodeURIComponent(runId)}&camera=151">Homog 151</a><a class="secondary" href="/homography-editor?run_id=${encodeURIComponent(runId)}&camera=152">Homog 152</a>`
+      : "";
     const deleteAction = isCaptureRun && INITIAL.delete_api_url
       ? `<button type="button" class="danger" data-run-id="${escapeAttr(runId)}">Delete</button>`
       : "";
     return `
-      <tr class="${latestClass}" data-run-id="${escapeAttr(runId)}">
+      <tr class="${latestClass} ${openClass}" data-run-id="${escapeAttr(runId)}" data-run-url="${escapeAttr(runUrl)}">
         <td>${entry.run_id || "-"}</td>
         <td>${formatDateTime(entry.captured_at)}</td>
         <td>
@@ -387,7 +402,7 @@ function renderHistory(){
         <td>${Number((entry.summary || {}).right_only || 0)}</td>
         <td>${detectorLabel(entry)}</td>
         <td>${entry.cam151_image_name || "-"}<br>${entry.cam152_image_name || "-"}</td>
-        <td><div class="row-actions">${openAction}${deleteAction}</div></td>
+        <td><div class="row-actions">${openAction}${homographyActions}${deleteAction}</div></td>
       </tr>
     `;
   }).join("");
@@ -459,10 +474,19 @@ function bindActions(){
   els.textFilter.addEventListener("input", renderHistory);
   els.historyBody.addEventListener("click", (event) => {
     const button = event.target instanceof HTMLElement ? event.target.closest("button.danger[data-run-id]") : null;
-    if(!button) return;
-    event.preventDefault();
-    const runId = button.getAttribute("data-run-id");
-    if(runId) void deleteRun(runId, button);
+    if(button){
+      event.preventDefault();
+      const runId = button.getAttribute("data-run-id");
+      if(runId) void deleteRun(runId, button);
+      return;
+    }
+    const link = event.target instanceof HTMLElement ? event.target.closest("a") : null;
+    if(link) return;
+    const row = event.target instanceof HTMLElement ? event.target.closest("tr[data-run-url]") : null;
+    const runUrl = row ? row.getAttribute("data-run-url") : "";
+    if(runUrl){
+      window.location.href = runUrl;
+    }
   });
 }
 
