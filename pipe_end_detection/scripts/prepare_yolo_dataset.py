@@ -169,8 +169,14 @@ def split_samples(
 
 def write_yaml(output_root: Path) -> None:
     yaml_path = output_root.parent / "data.yaml"
+    try:
+        dataset_base = output_root.parent.resolve().relative_to(Path.cwd().resolve()).as_posix()
+    except ValueError:
+        dataset_base = output_root.parent.resolve().as_posix()
+    if not dataset_base:
+        dataset_base = "."
     yaml_path.write_text(
-        "path: .\n"
+        f"path: {dataset_base}\n"
         "train: dataset/images/train\n"
         "val: dataset/images/val\n"
         "test: dataset/images/test\n\n"

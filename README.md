@@ -41,6 +41,13 @@ Runtime controls:
 
 - `PIPE_END_YOLO_MODEL`: optional explicit model path.
 - `PIPE_END_YOLO_DEVICE`: optional Ultralytics device, for example `0` or `cpu`.
+- `PIPE_END_YOLO_CONF`: optional global confidence threshold.
+- `PIPE_END_YOLO_CONF_CAM151`: optional cam151-specific confidence threshold.
+- `PIPE_END_YOLO_CONF_CAM152`: optional cam152-specific confidence threshold.
+- `PIPE_END_YOLO_IOU`: optional YOLO IoU threshold.
+- `PIPE_END_YOLO_VERTICAL_DUPLICATE_Y_OVERLAP`: suppresses boxes that occupy the same vertical band.
+- `PIPE_END_YOLO_GAP_RECOVERY_ENABLED`: enables/disables the second-pass YOLO search in vertical gaps.
+- `PIPE_END_YOLO_GAP_RECOVERY_CONF`: confidence threshold for the gap-recovery pass.
 - `PIPE_END_YOLO_ENABLED=1`: enables YOLO tube-start detection for experimental processing.
 
 Large local data is intentionally ignored:

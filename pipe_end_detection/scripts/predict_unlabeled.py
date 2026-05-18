@@ -18,6 +18,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--conf", type=float, default=0.20)
     parser.add_argument("--include-labeled", action="store_true")
     parser.add_argument("--labels-root", type=Path, default=PIPE_END_ROOT / "annotation_pool" / "labels")
+    parser.add_argument("--camera-filter", choices=["cam151", "cam152"], default=None)
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
@@ -46,6 +47,8 @@ def main() -> None:
         if not image_path.is_file() or image_path.suffix.lower() not in IMAGE_SUFFIXES:
             continue
         rel = image_path.relative_to(images_root)
+        if args.camera_filter and (not rel.parts or rel.parts[0] != args.camera_filter):
+            continue
         label_path = (labels_root / rel).with_suffix(".txt")
         if not args.include_labeled and has_label(label_path):
             continue

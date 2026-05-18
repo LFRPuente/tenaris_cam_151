@@ -26,6 +26,8 @@ IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 CLASS_ID = 0
 CLASS_NAME = "pipe_end"
 REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 PIPE_END_ROOT = REPO_ROOT / "pipe_end_detection"
 
 
@@ -47,6 +49,39 @@ class AppPaths:
     roi_toml_152: Path | None
     raw_image_151: Path | None
     raw_image_152: Path | None
+
+
+@dataclass(frozen=True)
+class AnnotationTask:
+    key: str
+    label: str
+    class_name: str
+    labels_root: Path
+    predictions_root: Path
+    model_path: Path
+    work_root: Path
+    project_root: Path
+    camera_filter: str | None = None
+    max_boxes: int | None = None
+    use_pipe_end_inference: bool = False
+    single_image_conf: float = 0.20
+    include_unlabeled_negatives: bool = False
+    allow_negative_labels: bool = False
+
+    def to_json(self) -> dict:
+        return {
+            "key": self.key,
+            "label": self.label,
+            "class_id": CLASS_ID,
+            "class_name": self.class_name,
+            "camera_filter": self.camera_filter,
+            "max_boxes": self.max_boxes,
+            "model_path": repo_display_path(self.model_path),
+            "labels_root": repo_display_path(self.labels_root),
+            "predictions_root": repo_display_path(self.predictions_root),
+            "include_unlabeled_negatives": self.include_unlabeled_negatives,
+            "allow_negative_labels": self.allow_negative_labels,
+        }
 
 
 class TrainingState:
@@ -80,6 +115,98 @@ class TrainingState:
 TRAINING_STATE = TrainingState()
 
 
+def active_model_path() -> Path:
+    return REPO_ROOT / "models" / "pipe_end_active" / "best.pt"
+
+
+def cam152_pipe_end_model_path() -> Path:
+    return REPO_ROOT / "models" / "pipe_end_cam152_active" / "best.pt"
+
+
+def tube_bundle_model_path() -> Path:
+    return REPO_ROOT / "models" / "tube_bundle_active" / "best.pt"
+
+
+def tube_bundle_edge_model_path() -> Path:
+    return REPO_ROOT / "models" / "tube_bundle_edge_active" / "best.pt"
+
+
+def repo_display_path(path: Path) -> str:
+    try:
+        return path.resolve().relative_to(REPO_ROOT.resolve()).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def task_config(paths: AppPaths, task_key: str | None = None) -> AnnotationTask:
+    key = (task_key or "pipe_end").strip().lower()
+    if key == "pipe_end":
+        return AnnotationTask(
+            key="pipe_end",
+            label="Pipe ends: cam151 model",
+            class_name=CLASS_NAME,
+            labels_root=paths.labels_root,
+            predictions_root=paths.predictions_root,
+            model_path=active_model_path(),
+            work_root=paths.root / "active_training",
+            project_root=paths.root / "runs" / "pipe_end_active",
+            camera_filter="cam151",
+            use_pipe_end_inference=True,
+            single_image_conf=_single_image_predict_conf(),
+            allow_negative_labels=True,
+        )
+    if key == "pipe_end_cam152":
+        return AnnotationTask(
+            key="pipe_end_cam152",
+            label="Pipe ends: cam152 model",
+            class_name=CLASS_NAME,
+            labels_root=paths.labels_root,
+            predictions_root=paths.root / "predictions" / "cam152_pipe_end" / "labels",
+            model_path=cam152_pipe_end_model_path(),
+            work_root=paths.root / "active_training_cam152",
+            project_root=paths.root / "runs" / "pipe_end_cam152_active",
+            camera_filter="cam152",
+            use_pipe_end_inference=True,
+            single_image_conf=_single_image_predict_conf(),
+            allow_negative_labels=True,
+        )
+    if key == "tube_bundle":
+        bundle_root = REPO_ROOT / "tube_bundle_detection"
+        return AnnotationTask(
+            key="tube_bundle",
+            label="Tube bundle: one box per image",
+            class_name="tube_bundle",
+            labels_root=bundle_root / "annotation_pool" / "labels",
+            predictions_root=bundle_root / "predictions" / "current" / "labels",
+            model_path=tube_bundle_model_path(),
+            work_root=bundle_root / "active_training",
+            project_root=bundle_root / "runs" / "tube_bundle_active",
+            max_boxes=1,
+            single_image_conf=0.20,
+            include_unlabeled_negatives=True,
+        )
+    if key == "tube_bundle_edge":
+        edge_root = REPO_ROOT / "tube_bundle_edge_detection"
+        return AnnotationTask(
+            key="tube_bundle_edge",
+            label="Tube bundle edge: pipe-end strip",
+            class_name="tube_bundle_edge",
+            labels_root=edge_root / "annotation_pool" / "labels",
+            predictions_root=edge_root / "predictions" / "current" / "labels",
+            model_path=tube_bundle_edge_model_path(),
+            work_root=edge_root / "active_training",
+            project_root=edge_root / "runs" / "tube_bundle_edge_active",
+            max_boxes=1,
+            single_image_conf=0.20,
+            allow_negative_labels=True,
+        )
+    raise ValueError(f"Unknown annotation task: {task_key!r}")
+
+
+def list_tasks(paths: AppPaths) -> list[AnnotationTask]:
+    return [task_config(paths, key) for key in ("pipe_end", "pipe_end_cam152", "tube_bundle", "tube_bundle_edge")]
+
+
 def normalize_rel(path: str) -> Path:
     decoded = unquote(path).replace("\\", "/")
     normalized = posixpath.normpath(decoded).lstrip("/")
@@ -94,11 +221,12 @@ def rel_to_url(path: Path) -> str:
 
 def load_status(status_path: Path) -> dict:
     if not status_path.exists():
-        return {"bad_warp": {}, "notes": {}}
+        return {"bad_warp": {}, "negative_labels": {}, "notes": {}}
     data = json.loads(status_path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
-        return {"bad_warp": {}, "notes": {}}
+        return {"bad_warp": {}, "negative_labels": {}, "notes": {}}
     data.setdefault("bad_warp", {})
+    data.setdefault("negative_labels", {})
     data.setdefault("notes", {})
     return data
 
@@ -106,6 +234,37 @@ def load_status(status_path: Path) -> dict:
 def save_status(status_path: Path, data: dict) -> None:
     status_path.parent.mkdir(parents=True, exist_ok=True)
     status_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def status_rel_keys(rel: Path) -> list[str]:
+    if rel.suffix.lower() in IMAGE_SUFFIXES:
+        return [rel.as_posix()]
+    return [rel.with_suffix(suffix).as_posix() for suffix in sorted(IMAGE_SUFFIXES)]
+
+
+def is_negative_annotation(status: dict, task: AnnotationTask, rel: Path) -> bool:
+    task_negatives = status.get("negative_labels", {}).get(task.key, {})
+    if not isinstance(task_negatives, dict):
+        return False
+    return any(bool(task_negatives.get(key, False)) for key in status_rel_keys(rel))
+
+
+def set_negative_annotation(status: dict, task: AnnotationTask, rel: Path, flag: bool) -> bool:
+    negative_labels = status.setdefault("negative_labels", {})
+    if not isinstance(negative_labels, dict):
+        negative_labels = {}
+        status["negative_labels"] = negative_labels
+    task_negatives = negative_labels.setdefault(task.key, {})
+    if not isinstance(task_negatives, dict):
+        task_negatives = {}
+        negative_labels[task.key] = task_negatives
+    keys = status_rel_keys(rel)
+    if flag:
+        task_negatives[keys[0]] = True
+    else:
+        for key in keys:
+            task_negatives.pop(key, None)
+    return is_negative_annotation(status, task, rel)
 
 
 def yolo_to_boxes(label_path: Path, image_width: int, image_height: int) -> list[dict]:
@@ -193,7 +352,8 @@ def image_size(path: Path) -> tuple[int, int]:
     raise ValueError(f"Could not read image dimensions: {path}")
 
 
-def build_image_items(paths: AppPaths) -> list[dict]:
+def build_image_items(paths: AppPaths, task: AnnotationTask | None = None) -> list[dict]:
+    task = task or task_config(paths)
     items: list[dict] = []
     status = load_status(paths.status_path)
     bad_warp = status.get("bad_warp", {})
@@ -201,13 +361,16 @@ def build_image_items(paths: AppPaths) -> list[dict]:
         if not image_path.is_file() or image_path.suffix.lower() not in IMAGE_SUFFIXES:
             continue
         rel = image_path.relative_to(paths.images_root)
-        label_path = (paths.labels_root / rel).with_suffix(".txt")
-        pred_path = (paths.predictions_root / rel).with_suffix(".txt")
+        if task.camera_filter and (not rel.parts or rel.parts[0] != task.camera_filter):
+            continue
+        label_path = (task.labels_root / rel).with_suffix(".txt")
+        pred_path = (task.predictions_root / rel).with_suffix(".txt")
         rel_key = rel.as_posix()
         width, height = image_size(image_path)
         labeled_count = 0
         if label_path.exists():
             labeled_count = len([line for line in label_path.read_text(encoding="utf-8").splitlines() if line.strip()])
+        negative = is_negative_annotation(status, task, rel)
         prediction_count = 0
         if pred_path.exists():
             prediction_count = len([line for line in pred_path.read_text(encoding="utf-8").splitlines() if line.strip()])
@@ -217,13 +380,15 @@ def build_image_items(paths: AppPaths) -> list[dict]:
                 "name": image_path.name,
                 "camera": rel.parts[0] if rel.parts else "",
                 "url": f"/image?path={rel_to_url(rel)}",
-                "label_rel": label_path.relative_to(paths.labels_root).as_posix(),
-                "prediction_rel": pred_path.relative_to(paths.predictions_root).as_posix(),
+                "task": task.key,
+                "label_rel": repo_display_path(label_path),
+                "prediction_rel": repo_display_path(pred_path),
                 "width": width,
                 "height": height,
                 "box_count": labeled_count,
                 "prediction_count": prediction_count,
-                "labeled": labeled_count > 0,
+                "labeled": labeled_count > 0 or negative,
+                "negative": negative,
                 "has_predictions": prediction_count > 0,
                 "bad_warp": bool(bad_warp.get(rel_key, False)),
             }
@@ -235,14 +400,31 @@ def label_has_boxes(label_path: Path) -> bool:
     return label_path.exists() and any(line.strip() for line in label_path.read_text(encoding="utf-8").splitlines())
 
 
-def collect_annotated_samples(paths: AppPaths) -> list[tuple[Path, Path, Path]]:
+def collect_annotated_samples(paths: AppPaths, task: AnnotationTask) -> list[tuple[Path, Path, Path]]:
     status = load_status(paths.status_path)
     bad_warp = status.get("bad_warp", {})
     samples: list[tuple[Path, Path, Path]] = []
-    for label_path in sorted(paths.labels_root.rglob("*.txt")):
-        if not label_has_boxes(label_path):
+    if task.include_unlabeled_negatives:
+        for image_path in sorted(paths.images_root.rglob("*")):
+            if not image_path.is_file() or image_path.suffix.lower() not in IMAGE_SUFFIXES:
+                continue
+            rel = image_path.relative_to(paths.images_root).with_suffix("")
+            if task.camera_filter and (not rel.parts or rel.parts[0] != task.camera_filter):
+                continue
+            if bad_warp.get(rel.with_suffix(".jpg").as_posix(), False) or bad_warp.get(
+                rel.with_suffix(".jpeg").as_posix(), False
+            ):
+                continue
+            label_path = (task.labels_root / rel).with_suffix(".txt")
+            samples.append((image_path, label_path, rel))
+        return samples
+
+    for label_path in sorted(task.labels_root.rglob("*.txt")):
+        rel = label_path.relative_to(task.labels_root).with_suffix("")
+        if not label_has_boxes(label_path) and not is_negative_annotation(status, task, rel):
             continue
-        rel = label_path.relative_to(paths.labels_root).with_suffix("")
+        if task.camera_filter and (not rel.parts or rel.parts[0] != task.camera_filter):
+            continue
         if bad_warp.get(rel.with_suffix(".jpg").as_posix(), False) or bad_warp.get(rel.with_suffix(".jpeg").as_posix(), False):
             continue
         image_path = None
@@ -264,11 +446,14 @@ def copy_training_split(samples: list[tuple[Path, Path, Path]], split: str, data
         target_image.parent.mkdir(parents=True, exist_ok=True)
         target_label.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(image_path, target_image)
-        shutil.copy2(label_path, target_label)
+        if label_path.exists():
+            shutil.copy2(label_path, target_label)
+        else:
+            target_label.write_text("", encoding="utf-8")
 
 
-def prepare_active_dataset(paths: AppPaths, samples: list[tuple[Path, Path, Path]]) -> Path:
-    work_root = paths.root / "active_training"
+def prepare_active_dataset(paths: AppPaths, task: AnnotationTask, samples: list[tuple[Path, Path, Path]]) -> Path:
+    work_root = task.work_root
     dataset_root = work_root / "dataset"
     if dataset_root.exists():
         shutil.rmtree(dataset_root)
@@ -292,84 +477,89 @@ def prepare_active_dataset(paths: AppPaths, samples: list[tuple[Path, Path, Path
         "train: images/train\n"
         "val: images/val\n\n"
         "names:\n"
-        f"  {CLASS_ID}: {CLASS_NAME}\n",
+        f"  {CLASS_ID}: {task.class_name}\n",
         encoding="utf-8",
     )
     return data_yaml
 
 
-def schedule_training(paths: AppPaths, reason: str) -> dict:
+def schedule_training(paths: AppPaths, reason: str, task_key: str | None = None) -> dict:
+    task = task_config(paths, task_key)
     with TRAINING_STATE.lock:
         if TRAINING_STATE.running:
             return {"scheduled": False, "reason": "AI job already running", "status": TRAINING_STATE.status}
         TRAINING_STATE.running = True
         TRAINING_STATE.pending = False
         TRAINING_STATE.status = "queued"
-        TRAINING_STATE.message = f"Queued training after {reason}."
+        TRAINING_STATE.message = f"Queued {task.label} training after {reason}."
         TRAINING_STATE.error = None
-    thread = threading.Thread(target=training_worker, args=(paths,), daemon=True)
+    thread = threading.Thread(target=training_worker, args=(paths, task.key), daemon=True)
     thread.start()
-    return {"scheduled": True, "pending": False}
+    return {"scheduled": True, "pending": False, "task": task.to_json()}
 
 
-def training_worker(paths: AppPaths) -> None:
+def training_worker(paths: AppPaths, task_key: str) -> None:
     try:
-        samples = collect_annotated_samples(paths)
+        task = task_config(paths, task_key)
+        task.labels_root.mkdir(parents=True, exist_ok=True)
+        task.predictions_root.mkdir(parents=True, exist_ok=True)
+        task.work_root.mkdir(parents=True, exist_ok=True)
+        task.project_root.mkdir(parents=True, exist_ok=True)
+        samples = collect_annotated_samples(paths, task)
         with TRAINING_STATE.lock:
             TRAINING_STATE.annotated_images = len(samples)
         if len(samples) < paths.min_train_images:
             with TRAINING_STATE.lock:
                 TRAINING_STATE.status = "skipped"
                 TRAINING_STATE.message = (
-                    f"Need at least {paths.min_train_images} annotated images; currently {len(samples)}."
+                    f"{task.label}: need at least {paths.min_train_images} annotated images; currently {len(samples)}."
                 )
                 TRAINING_STATE.finished_at = time.time()
             return
 
         with TRAINING_STATE.lock:
             TRAINING_STATE.status = "training"
-            TRAINING_STATE.message = f"Training on {len(samples)} annotated images..."
+            TRAINING_STATE.message = f"Training {task.label} on {len(samples)} annotated images..."
             TRAINING_STATE.started_at = time.time()
             TRAINING_STATE.finished_at = None
             TRAINING_STATE.error = None
 
-        data_yaml = prepare_active_dataset(paths, samples)
-        stable_weights = paths.root / "models" / "pipe_end_active" / "best.pt"
-        model_arg = str(stable_weights if stable_weights.exists() else paths.base_model)
-        train_cmd = [
-            "yolo",
-            "detect",
-            "train",
-            f"data={data_yaml}",
-            f"model={model_arg}",
-            f"imgsz={paths.train_imgsz}",
-            f"epochs={paths.train_epochs}",
-            f"batch={paths.train_batch}",
-            f"project={paths.root / 'runs' / 'pipe_end_active'}",
-            "name=latest",
-            "exist_ok=True",
-            "mosaic=0",
-            "fliplr=0",
-            "flipud=0",
-            "translate=0",
-            "scale=0",
-            "hsv_h=0",
-            "hsv_s=0",
-            "hsv_v=0",
-            "close_mosaic=0",
-            "workers=0",
-            f"device={paths.train_device}",
-        ]
-        subprocess.run(train_cmd, cwd=paths.root, check=True)
+        data_yaml = prepare_active_dataset(paths, task, samples)
+        stable_weights = task.model_path
+        model_arg = _initial_training_model(task, paths.base_model)
 
-        best_weight = paths.root / "runs" / "pipe_end_active" / "latest" / "weights" / "best.pt"
+        from ultralytics import YOLO  # type: ignore
+
+        model = YOLO(model_arg)
+        model.train(
+            data=str(data_yaml),
+            imgsz=int(paths.train_imgsz),
+            epochs=int(paths.train_epochs),
+            batch=int(paths.train_batch),
+            project=str(task.project_root),
+            name="latest",
+            exist_ok=True,
+            mosaic=0,
+            fliplr=0,
+            flipud=0,
+            translate=0,
+            scale=0,
+            hsv_h=0,
+            hsv_s=0,
+            hsv_v=0,
+            close_mosaic=0,
+            workers=0,
+            device=str(paths.train_device),
+        )
+
+        best_weight = task.project_root / "latest" / "weights" / "best.pt"
         stable_weights.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(best_weight, stable_weights)
 
         with TRAINING_STATE.lock:
             TRAINING_STATE.status = "ready"
-            TRAINING_STATE.message = f"Model trained from {len(samples)} annotated images. Generate predictions when ready."
-            TRAINING_STATE.weights_path = stable_weights.relative_to(paths.root).as_posix()
+            TRAINING_STATE.message = f"{task.label} model trained from {len(samples)} annotated images. Generate predictions when ready."
+            TRAINING_STATE.weights_path = repo_display_path(stable_weights)
             TRAINING_STATE.finished_at = time.time()
     except Exception as exc:
         with TRAINING_STATE.lock:
@@ -382,32 +572,34 @@ def training_worker(paths: AppPaths) -> None:
             TRAINING_STATE.running = False
 
 
-def schedule_prediction(paths: AppPaths, reason: str) -> dict:
+def schedule_prediction(paths: AppPaths, reason: str, task_key: str | None = None) -> dict:
+    task = task_config(paths, task_key)
     with TRAINING_STATE.lock:
         if TRAINING_STATE.running:
             return {"scheduled": False, "reason": "AI job already running", "status": TRAINING_STATE.status}
-        stable_weights = paths.root / "models" / "pipe_end_active" / "best.pt"
+        stable_weights = task.model_path
         if not stable_weights.exists():
-            return {"scheduled": False, "reason": "No trained model found. Train AI first."}
+            return {"scheduled": False, "reason": f"No trained model found for {task.label}. Train AI first."}
         TRAINING_STATE.running = True
         TRAINING_STATE.pending = False
         TRAINING_STATE.status = "queued"
-        TRAINING_STATE.message = f"Queued prediction generation after {reason}."
+        TRAINING_STATE.message = f"Queued {task.label} prediction generation after {reason}."
         TRAINING_STATE.error = None
-    thread = threading.Thread(target=prediction_worker, args=(paths,), daemon=True)
+    thread = threading.Thread(target=prediction_worker, args=(paths, task.key), daemon=True)
     thread.start()
-    return {"scheduled": True, "pending": False}
+    return {"scheduled": True, "pending": False, "task": task.to_json()}
 
 
-def prediction_worker(paths: AppPaths) -> None:
+def prediction_worker(paths: AppPaths, task_key: str) -> None:
     try:
-        stable_weights = paths.root / "models" / "pipe_end_active" / "best.pt"
+        task = task_config(paths, task_key)
+        stable_weights = task.model_path
         with TRAINING_STATE.lock:
             TRAINING_STATE.status = "predicting"
-            TRAINING_STATE.message = "Generating AI predictions..."
+            TRAINING_STATE.message = f"Generating {task.label} AI predictions..."
             TRAINING_STATE.started_at = time.time()
             TRAINING_STATE.finished_at = None
-            TRAINING_STATE.weights_path = stable_weights.relative_to(paths.root).as_posix()
+            TRAINING_STATE.weights_path = repo_display_path(stable_weights)
             TRAINING_STATE.error = None
 
         predict_cmd = [
@@ -418,20 +610,22 @@ def prediction_worker(paths: AppPaths) -> None:
             "--images-root",
             str(paths.images_root),
             "--labels-root",
-            str(paths.labels_root),
+            str(task.labels_root),
             "--output-root",
-            str(paths.predictions_root.parent),
+            str(task.predictions_root.parent),
             "--imgsz",
             str(paths.train_imgsz),
             "--conf",
-            "0.25",
+            str(task.single_image_conf),
             "--include-labeled",
         ]
+        if task.camera_filter:
+            predict_cmd.extend(["--camera-filter", task.camera_filter])
         subprocess.run(predict_cmd, cwd=paths.root, check=True)
 
         with TRAINING_STATE.lock:
             TRAINING_STATE.status = "ready"
-            TRAINING_STATE.message = "AI predictions generated."
+            TRAINING_STATE.message = f"{task.label} AI predictions generated."
             TRAINING_STATE.finished_at = time.time()
     except Exception as exc:
         with TRAINING_STATE.lock:
@@ -442,6 +636,164 @@ def prediction_worker(paths: AppPaths) -> None:
     finally:
         with TRAINING_STATE.lock:
             TRAINING_STATE.running = False
+
+
+def _single_image_predict_conf() -> float:
+    raw = os.environ.get("PIPE_END_ANNOTATOR_PREDICT_CONF", "0.20").strip()
+    try:
+        return float(raw)
+    except ValueError:
+        return 0.20
+
+
+def _single_image_predict_device() -> str | None:
+    raw = os.environ.get("PIPE_END_YOLO_DEVICE", "").strip()
+    return raw or None
+
+
+def _fallback_model_for_task(task: AnnotationTask) -> Path:
+    if task.model_path.exists():
+        return task.model_path
+    raise FileNotFoundError(f"No trained model found for {task.label}: {task.model_path}")
+
+
+def _initial_training_model(task: AnnotationTask, base_model: str) -> str:
+    if task.model_path.exists():
+        return str(task.model_path)
+    return str(base_model)
+
+
+def _run_generic_yolo_prediction(
+    *,
+    paths: AppPaths,
+    image_path: Path,
+    rel: Path,
+    output_dir: Path,
+    task: AnnotationTask,
+    imgsz: int,
+    device: str | None,
+) -> dict:
+    try:
+        from ultralytics import YOLO  # type: ignore
+    except Exception as exc:
+        raise RuntimeError("Python package 'ultralytics' was not found. Install ultralytics first.") from exc
+
+    model_path = _fallback_model_for_task(task)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    width, height = image_size(image_path)
+    model = YOLO(str(model_path))
+    predict_kwargs: dict[str, object] = {
+        "imgsz": int(imgsz),
+        "conf": float(task.single_image_conf),
+        "verbose": False,
+        "max_det": 16 if task.max_boxes else 256,
+    }
+    if device:
+        predict_kwargs["device"] = str(device)
+    results = model.predict(str(image_path), **predict_kwargs)
+    boxes: list[dict] = []
+    if results:
+        result = results[0]
+        raw_boxes = getattr(result, "boxes", None)
+        if raw_boxes is not None and raw_boxes.xyxy is not None:
+            xyxy = raw_boxes.xyxy.cpu().numpy()
+            cls = raw_boxes.cls.cpu().numpy()
+            scores = raw_boxes.conf.cpu().numpy()
+            for class_id, coords, score in zip(cls, xyxy, scores):
+                if int(class_id) != CLASS_ID:
+                    continue
+                x1, y1, x2, y2 = [float(value) for value in coords]
+                boxes.append(
+                    {
+                        "class_id": CLASS_ID,
+                        "x": max(0.0, min(float(width), x1)),
+                        "y": max(0.0, min(float(height), y1)),
+                        "w": max(0.0, min(float(width), x2) - max(0.0, min(float(width), x1))),
+                        "h": max(0.0, min(float(height), y2) - max(0.0, min(float(height), y1))),
+                        "conf": float(score),
+                    }
+                )
+    boxes.sort(key=lambda box: float(box.get("conf") or 0.0), reverse=True)
+    if task.max_boxes is not None:
+        boxes = boxes[: task.max_boxes]
+    prediction_label_path = (task.predictions_root / rel).with_suffix(".txt")
+    prediction_label_path.parent.mkdir(parents=True, exist_ok=True)
+    prediction_label_path.write_text(boxes_to_yolo(boxes, width, height), encoding="utf-8")
+    return {
+        "ok": True,
+        "boxes": boxes,
+        "count": len(boxes),
+        "width": width,
+        "height": height,
+        "model_path": repo_display_path(model_path),
+        "prediction_path": repo_display_path(prediction_label_path),
+        "overlay_path": None,
+    }
+
+
+def run_single_image_prediction(paths: AppPaths, rel: Path, task_key: str | None = None) -> dict:
+    from src.pipe_end_yolo import resolve_model_path, run_pipe_end_inference
+
+    task = task_config(paths, task_key)
+    image_path = paths.images_root / rel
+    if not image_path.exists() or image_path.suffix.lower() not in IMAGE_SUFFIXES:
+        raise FileNotFoundError(f"image not found: {rel.as_posix()}")
+    if task.camera_filter and (not rel.parts or rel.parts[0] != task.camera_filter):
+        raise ValueError(f"{task.label} only supports {task.camera_filter} images.")
+
+    if not task.use_pipe_end_inference:
+        output_dir = task.work_root / "single_image_runs" / rel.parent / image_path.stem
+        return _run_generic_yolo_prediction(
+            paths=paths,
+            image_path=image_path,
+            rel=rel,
+            output_dir=output_dir,
+            task=task,
+            imgsz=paths.train_imgsz,
+            device=_single_image_predict_device(),
+        )
+
+    model_path = _fallback_model_for_task(task)
+    output_dir = task.work_root / "single_image_runs" / rel.parent / image_path.stem
+    result = run_pipe_end_inference(
+        image_path,
+        output_dir,
+        model_path=model_path,
+        imgsz=paths.train_imgsz,
+        conf=task.single_image_conf,
+        device=_single_image_predict_device(),
+    )
+
+    prediction_label_path = (task.predictions_root / rel).with_suffix(".txt")
+    prediction_label_path.parent.mkdir(parents=True, exist_ok=True)
+    lines: list[str] = []
+    for pred in result.predictions:
+        x1 = max(0.0, min(float(result.image_width), float(pred.x1)))
+        y1 = max(0.0, min(float(result.image_height), float(pred.y1)))
+        x2 = max(0.0, min(float(result.image_width), float(pred.x2)))
+        y2 = max(0.0, min(float(result.image_height), float(pred.y2)))
+        w = max(0.0, x2 - x1)
+        h = max(0.0, y2 - y1)
+        if w <= 0.0 or h <= 0.0:
+            continue
+        xc = (x1 + 0.5 * w) / float(result.image_width)
+        yc = (y1 + 0.5 * h) / float(result.image_height)
+        wn = w / float(result.image_width)
+        hn = h / float(result.image_height)
+        lines.append(f"0 {xc:.6f} {yc:.6f} {wn:.6f} {hn:.6f} {float(pred.confidence):.6f}")
+    prediction_label_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+
+    boxes = yolo_to_boxes(prediction_label_path, result.image_width, result.image_height)
+    return {
+        "ok": True,
+        "boxes": boxes,
+        "count": len(boxes),
+        "width": result.image_width,
+        "height": result.image_height,
+        "model_path": repo_display_path(model_path),
+        "prediction_path": repo_display_path(prediction_label_path),
+        "overlay_path": repo_display_path(result.overlay_path),
+    }
 
 
 def _read_roi_toml(path: Path) -> dict:
@@ -1035,6 +1387,11 @@ HTML = r"""<!doctype html>
       color: var(--text);
     }
     .item.done .badge { background: rgba(50,213,131,0.16); color: #a7f3c7; }
+    .item.negative {
+      border-color: rgba(115, 192, 255, 0.45);
+      background: rgba(115, 192, 255, 0.10);
+    }
+    .item.negative .badge { background: rgba(115,192,255,0.18); color: #d8efff; }
     .item.bad {
       border-color: rgba(255, 92, 92, 0.45);
       background: rgba(255, 92, 92, 0.10);
@@ -1132,10 +1489,16 @@ HTML = r"""<!doctype html>
   <div class="app">
     <aside>
       <header>
-        <h1>Pipe End Annotator</h1>
-        <div class="small">Draw tight boxes around visible <b>pipe_end</b> lines. Class is always <b>0 pipe_end</b>.</div>
+        <h1>Tube Annotator</h1>
+        <div class="small" id="taskHelp">Choose a task, then draw boxes for class <b>0</b>.</div>
       </header>
       <div class="controls">
+        <select id="taskSelect">
+          <option value="pipe_end">pipe_end | cam151 model</option>
+          <option value="pipe_end_cam152">pipe_end | cam152 model</option>
+          <option value="tube_bundle">tube_bundle | one box</option>
+          <option value="tube_bundle_edge">tube_bundle_edge | pipe-end strip</option>
+        </select>
         <div class="row">
           <select id="cameraFilter">
             <option value="all">all cameras</option>
@@ -1146,6 +1509,7 @@ HTML = r"""<!doctype html>
             <option value="all">all</option>
             <option value="todo">todo</option>
             <option value="done">done</option>
+            <option value="negative">negative</option>
             <option value="bad">bad warp</option>
             <option value="usable">usable only</option>
           </select>
@@ -1157,13 +1521,19 @@ HTML = r"""<!doctype html>
         </div>
         <div class="row">
           <button class="primary" id="saveBtn">Save</button>
-          <button class="danger" id="deleteBtn">Delete box</button>
+          <button id="negativeBtn">Negative image</button>
         </div>
         <div class="row">
+          <button class="danger" id="deleteBtn">Delete box</button>
+          <button class="danger" id="badWarpBtn">Bad warp</button>
+        </div>
+        <div class="row">
+          <button id="runImagePredBtn">Run model on this image</button>
           <button id="loadPredBtn">Load AI boxes</button>
+        </div>
+        <div class="row">
           <button id="trainBtn">Train AI</button>
           <button id="generatePredBtn">Generate predictions</button>
-          <button class="danger" id="badWarpBtn">Bad warp</button>
         </div>
       </div>
       <div class="list" id="imageList"></div>
@@ -1191,6 +1561,7 @@ HTML = r"""<!doctype html>
         <span><span class="kbd">middle/right drag</span> pan</span>
         <span><span class="kbd">Space+drag</span> pan</span>
         <span><span class="kbd">click</span> select</span>
+        <span><span class="kbd">drag handle</span> resize</span>
         <span><span class="kbd">Del</span> delete</span>
         <span><span class="kbd">Ctrl+S</span> save</span>
         <span><span class="kbd">←/→</span> prev/next</span>
@@ -1200,13 +1571,17 @@ HTML = r"""<!doctype html>
 
   <script>
     const state = {
+      task: 'pipe_end',
+      tasks: {},
       images: [],
       filtered: [],
       currentIndex: 0,
       boxes: [],
       selected: -1,
       drawing: null,
+      resizing: null,
       panning: null,
+      negative: false,
       spaceDown: false,
       mode: 'draw',
       dirty: false,
@@ -1217,6 +1592,8 @@ HTML = r"""<!doctype html>
     };
 
     const els = {
+      taskSelect: document.getElementById('taskSelect'),
+      taskHelp: document.getElementById('taskHelp'),
       cameraFilter: document.getElementById('cameraFilter'),
       statusFilter: document.getElementById('statusFilter'),
       search: document.getElementById('search'),
@@ -1228,7 +1605,9 @@ HTML = r"""<!doctype html>
       stage: document.getElementById('stage'),
       status: document.getElementById('status'),
       saveBtn: document.getElementById('saveBtn'),
+      negativeBtn: document.getElementById('negativeBtn'),
       deleteBtn: document.getElementById('deleteBtn'),
+      runImagePredBtn: document.getElementById('runImagePredBtn'),
       loadPredBtn: document.getElementById('loadPredBtn'),
       trainBtn: document.getElementById('trainBtn'),
       generatePredBtn: document.getElementById('generatePredBtn'),
@@ -1246,6 +1625,45 @@ HTML = r"""<!doctype html>
 
     function setStatus(text) {
       els.status.innerHTML = state.dirty ? `<span class="dirty">unsaved</span> - ${text}` : text;
+    }
+
+    function currentTask() {
+      return state.tasks[state.task] || {
+        key: state.task,
+        class_name: 'pipe_end',
+        max_boxes: null,
+        camera_filter: null,
+        label: state.task,
+        allow_negative_labels: false
+      };
+    }
+
+    function updateTaskHelp() {
+      const task = currentTask();
+      const maxText = task.max_boxes ? ` Max ${task.max_boxes} box per image.` : '';
+      const camText = task.camera_filter ? ` Camera: ${task.camera_filter}.` : '';
+      const negText = task.allow_negative_labels ? ' Use Negative image for confirmed no-box frames.' : '';
+      els.taskHelp.innerHTML = `Task <b>${task.class_name}</b>. Class is always <b>0</b>.${camText}${maxText}${negText}`;
+      if (task.camera_filter) {
+        els.cameraFilter.value = task.camera_filter;
+        els.cameraFilter.disabled = true;
+      } else {
+        els.cameraFilter.disabled = false;
+      }
+      updateNegativeUi();
+    }
+
+    function updateNegativeUi() {
+      const task = currentTask();
+      if (!task.allow_negative_labels) {
+        els.negativeBtn.disabled = true;
+        els.negativeBtn.textContent = 'Negative image';
+        els.negativeBtn.classList.remove('primary');
+        return;
+      }
+      els.negativeBtn.disabled = false;
+      els.negativeBtn.textContent = state.negative ? 'Clear negative' : 'Negative image';
+      els.negativeBtn.classList.toggle('primary', state.negative);
     }
 
     function setMode(mode) {
@@ -1279,6 +1697,7 @@ HTML = r"""<!doctype html>
         if (cam !== 'all' && item.camera !== cam) return false;
         if (status === 'todo' && item.labeled) return false;
         if (status === 'done' && !item.labeled) return false;
+        if (status === 'negative' && !item.negative) return false;
         if (status === 'bad' && !item.bad_warp) return false;
         if (status === 'usable' && item.bad_warp) return false;
         if (q && !item.rel.toLowerCase().includes(q)) return false;
@@ -1292,10 +1711,11 @@ HTML = r"""<!doctype html>
       els.imageList.innerHTML = '';
       state.filtered.forEach((item, idx) => {
         const div = document.createElement('div');
-        div.className = `item ${idx === state.currentIndex ? 'active' : ''} ${item.labeled ? 'done' : ''} ${item.bad_warp ? 'bad' : ''}`;
+        div.className = `item ${idx === state.currentIndex ? 'active' : ''} ${item.labeled ? 'done' : ''} ${item.negative ? 'negative' : ''} ${item.bad_warp ? 'bad' : ''}`;
         const badges = [
           `${item.box_count} boxes`,
           item.has_predictions ? `${item.prediction_count} AI` : null,
+          item.negative ? 'NEGATIVE' : null,
           item.bad_warp ? 'BAD WARP' : null
         ].filter(Boolean).map(text => `<span class="badge">${text}</span>`).join(' ');
         div.innerHTML = `<div class="item-title">${item.rel}</div>${badges}`;
@@ -1305,7 +1725,8 @@ HTML = r"""<!doctype html>
     }
 
     async function refreshImages(keepRel=null) {
-      const data = await api('/api/images');
+      updateTaskHelp();
+      const data = await api('/api/images?task=' + encodeURIComponent(state.task));
       state.images = data.images;
       applyFilters();
       if (keepRel) {
@@ -1327,7 +1748,9 @@ HTML = r"""<!doctype html>
       state.currentIndex = Math.max(0, Math.min(idx, state.filtered.length - 1));
       state.selected = -1;
       state.drawing = null;
+      state.resizing = null;
       state.dirty = false;
+      state.negative = false;
       await loadCurrent();
       renderList();
     }
@@ -1335,7 +1758,7 @@ HTML = r"""<!doctype html>
     async function loadCurrent() {
       const item = currentItem();
       if (!item) return;
-      els.title.textContent = `${item.bad_warp ? '[BAD WARP] ' : ''}${item.rel} (${item.width}x${item.height})`;
+      els.title.textContent = `${item.bad_warp ? '[BAD WARP] ' : ''}${item.negative ? '[NEGATIVE] ' : ''}${currentTask().class_name} | ${item.rel} (${item.width}x${item.height})`;
       state.imageNatural = {w: item.width, h: item.height};
       els.image.onload = async () => {
         els.image.width = item.width;
@@ -1348,9 +1771,12 @@ HTML = r"""<!doctype html>
         draw();
       };
       els.image.src = item.url + '&t=' + Date.now();
-      const labels = await api('/api/labels?path=' + encodeURIComponent(item.rel));
+      const labels = await api('/api/labels?task=' + encodeURIComponent(state.task) + '&path=' + encodeURIComponent(item.rel));
       state.boxes = labels.boxes || [];
-      setStatus(`loaded ${state.boxes.length} boxes`);
+      state.resizing = null;
+      state.negative = !!labels.negative;
+      updateNegativeUi();
+      setStatus(state.negative ? 'loaded as negative annotation' : `loaded ${state.boxes.length} boxes`);
       draw();
     }
 
@@ -1420,6 +1846,75 @@ HTML = r"""<!doctype html>
       return -1;
     }
 
+    function handleRadius() {
+      return Math.max(5, 8 / Math.max(0.001, state.zoom));
+    }
+
+    function boxHandles(box) {
+      const x1 = box.x;
+      const y1 = box.y;
+      const x2 = box.x + box.w;
+      const y2 = box.y + box.h;
+      const mx = x1 + box.w / 2;
+      const my = y1 + box.h / 2;
+      return [
+        {id: 'nw', x: x1, y: y1}, {id: 'n', x: mx, y: y1}, {id: 'ne', x: x2, y: y1},
+        {id: 'e', x: x2, y: my}, {id: 'se', x: x2, y: y2}, {id: 's', x: mx, y: y2},
+        {id: 'sw', x: x1, y: y2}, {id: 'w', x: x1, y: my}
+      ];
+    }
+
+    function hitHandle(point, box) {
+      const r = handleRadius();
+      for (const handle of boxHandles(box)) {
+        if (Math.abs(point.x - handle.x) <= r && Math.abs(point.y - handle.y) <= r) return handle.id;
+      }
+      return null;
+    }
+
+    function resizeCursor(handle) {
+      if (handle === 'n' || handle === 's') return 'ns-resize';
+      if (handle === 'e' || handle === 'w') return 'ew-resize';
+      if (handle === 'nw' || handle === 'se') return 'nwse-resize';
+      if (handle === 'ne' || handle === 'sw') return 'nesw-resize';
+      return state.mode === 'pan' ? 'grab' : 'crosshair';
+    }
+
+    function updateHoverCursor(evt) {
+      if (state.panning || state.drawing || state.resizing || state.mode === 'pan' || state.spaceDown) return;
+      const box = state.selected >= 0 ? state.boxes[state.selected] : null;
+      if (!box) {
+        els.overlay.style.cursor = 'crosshair';
+        return;
+      }
+      const handle = hitHandle(canvasPoint(evt), box);
+      els.overlay.style.cursor = handle ? resizeCursor(handle) : 'crosshair';
+    }
+
+    function resizedBox(original, handle, point) {
+      let x1 = original.x;
+      let y1 = original.y;
+      let x2 = original.x + original.w;
+      let y2 = original.y + original.h;
+      if (handle.includes('w')) x1 = point.x;
+      if (handle.includes('e')) x2 = point.x;
+      if (handle.includes('n')) y1 = point.y;
+      if (handle.includes('s')) y2 = point.y;
+      x1 = Math.max(0, Math.min(state.imageNatural.w, x1));
+      x2 = Math.max(0, Math.min(state.imageNatural.w, x2));
+      y1 = Math.max(0, Math.min(state.imageNatural.h, y1));
+      y2 = Math.max(0, Math.min(state.imageNatural.h, y2));
+      let x = Math.min(x1, x2);
+      let y = Math.min(y1, y2);
+      let w = Math.abs(x2 - x1);
+      let h = Math.abs(y2 - y1);
+      if (w < 3) w = 3;
+      if (h < 3) h = 3;
+      if (x + w > state.imageNatural.w) x = Math.max(0, state.imageNatural.w - w);
+      if (y + h > state.imageNatural.h) y = Math.max(0, state.imageNatural.h - h);
+      return {...original, x, y, w, h};
+    }
+
     function drawBox(box, idx, selected=false) {
       ctx.save();
       ctx.strokeStyle = selected ? '#32d583' : '#ffd43b';
@@ -1430,11 +1925,32 @@ HTML = r"""<!doctype html>
       ctx.fillStyle = selected ? '#32d583' : '#ffd43b';
       ctx.font = '16px Segoe UI';
       ctx.fillText(String(idx + 1), box.x + 3, Math.max(16, box.y - 4));
+      if (selected) {
+        const r = handleRadius();
+        ctx.fillStyle = '#101214';
+        ctx.strokeStyle = '#32d583';
+        ctx.lineWidth = Math.max(2, 2 / Math.max(0.001, state.zoom));
+        for (const handle of boxHandles(box)) {
+          ctx.beginPath();
+          ctx.rect(handle.x - r, handle.y - r, r * 2, r * 2);
+          ctx.fill();
+          ctx.stroke();
+        }
+      }
       ctx.restore();
     }
 
     function draw() {
       ctx.clearRect(0, 0, els.overlay.width, els.overlay.height);
+      if (state.negative) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(115,192,255,0.16)';
+        ctx.fillRect(0, 0, els.overlay.width, els.overlay.height);
+        ctx.fillStyle = '#d8efff';
+        ctx.font = 'bold 28px Segoe UI';
+        ctx.fillText('NEGATIVE ANNOTATION', 18, 42);
+        ctx.restore();
+      }
       state.boxes.forEach((box, idx) => drawBox(box, idx, idx === state.selected));
       if (state.drawing) {
         const box = normBox(state.drawing.start, state.drawing.end);
@@ -1456,14 +1972,57 @@ HTML = r"""<!doctype html>
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
           path: item.rel,
+          task: state.task,
           width: state.imageNatural.w,
           height: state.imageNatural.h,
-          boxes: state.boxes
+          boxes: state.boxes,
+          negative: state.negative && state.boxes.length === 0
         })
       });
       state.dirty = false;
+      state.negative = !!result.negative;
+      updateNegativeUi();
       await refreshImages(item.rel);
-      setStatus(`saved ${state.boxes.length} boxes`);
+      setStatus(state.negative ? 'saved negative annotation' : `saved ${state.boxes.length} boxes`);
+      await refreshTrainStatus();
+    }
+
+    async function toggleNegativeAnnotation() {
+      const item = currentItem();
+      if (!item) return;
+      const task = currentTask();
+      if (!task.allow_negative_labels) {
+        setStatus('negative annotations are not enabled for this task');
+        return;
+      }
+      const next = !state.negative;
+      if (next && (state.boxes.length || state.dirty)) {
+        const ok = confirm('Mark this image as negative and clear current boxes?');
+        if (!ok) return;
+      }
+      const result = await api('/api/labels', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          path: item.rel,
+          task: state.task,
+          width: state.imageNatural.w,
+          height: state.imageNatural.h,
+          boxes: [],
+          negative: next
+        })
+      });
+      state.boxes = [];
+      state.selected = -1;
+      state.drawing = null;
+      state.resizing = null;
+      state.dirty = false;
+      state.negative = !!result.negative;
+      updateNegativeUi();
+      draw();
+      await refreshImages(item.rel);
+      await loadCurrent();
+      setStatus(state.negative ? 'marked as negative annotation' : 'negative annotation cleared');
       await refreshTrainStatus();
     }
 
@@ -1495,7 +2054,7 @@ HTML = r"""<!doctype html>
         const result = await api('/api/train', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({reason: 'manual button'})
+          body: JSON.stringify({reason: 'manual button', task: state.task})
         });
         setStatus(result.scheduled ? 'AI training started' : `AI training not started: ${result.reason || 'unknown'}`);
         await refreshTrainStatus();
@@ -1510,12 +2069,50 @@ HTML = r"""<!doctype html>
         const result = await api('/api/generate-predictions', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({reason: 'manual button'})
+          body: JSON.stringify({reason: 'manual button', task: state.task})
         });
         setStatus(result.scheduled ? 'AI prediction generation started' : `AI predictions not started: ${result.reason || 'unknown'}`);
         await refreshTrainStatus();
       } catch (err) {
         setStatus(`AI prediction request failed: ${err.message}`);
+      }
+    }
+
+    async function runModelOnCurrentImage() {
+      const item = currentItem();
+      if (!item) return;
+      if (state.dirty || state.boxes.length) {
+        const ok = confirm('Replace current boxes with model predictions for this image? Unsaved changes will be lost.');
+        if (!ok) return;
+      }
+      const button = els.runImagePredBtn;
+      try {
+        if (button) {
+          button.disabled = true;
+          button.textContent = 'Running model...';
+        }
+        setStatus('running model on current image...');
+        const payload = await api('/api/predict-current', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({path: item.rel, task: state.task})
+        });
+        state.boxes = payload.boxes || [];
+        state.selected = -1;
+        state.resizing = null;
+        state.negative = false;
+        updateNegativeUi();
+        state.dirty = true;
+        draw();
+        await refreshImages(item.rel);
+        setStatus(`model found ${state.boxes.length} boxes; review and save`);
+      } catch (err) {
+        setStatus(`model prediction failed: ${err.message}`);
+      } finally {
+        if (button) {
+          button.disabled = false;
+          button.textContent = 'Run model on this image';
+        }
       }
     }
 
@@ -1539,9 +2136,12 @@ HTML = r"""<!doctype html>
         const ok = confirm('Current boxes are unsaved. Replace them with AI predictions?');
         if (!ok) return;
       }
-      const payload = await api('/api/predictions?path=' + encodeURIComponent(item.rel));
+      const payload = await api('/api/predictions?task=' + encodeURIComponent(state.task) + '&path=' + encodeURIComponent(item.rel));
       state.boxes = payload.boxes || [];
       state.selected = -1;
+      state.resizing = null;
+      state.negative = false;
+      updateNegativeUi();
       markDirty();
       setStatus(`loaded ${state.boxes.length} AI boxes; review and save`);
     }
@@ -1550,6 +2150,7 @@ HTML = r"""<!doctype html>
       if (state.selected < 0) return;
       state.boxes.splice(state.selected, 1);
       state.selected = -1;
+      state.resizing = null;
       markDirty();
     }
 
@@ -1584,6 +2185,19 @@ HTML = r"""<!doctype html>
       }
       if (evt.button !== 0) return;
       const p = canvasPoint(evt);
+      if (state.selected >= 0 && state.boxes[state.selected]) {
+        const handle = hitHandle(p, state.boxes[state.selected]);
+        if (handle) {
+          evt.preventDefault();
+          state.resizing = {
+            index: state.selected,
+            handle,
+            original: {...state.boxes[state.selected]}
+          };
+          els.overlay.style.cursor = resizeCursor(handle);
+          return;
+        }
+      }
       const hit = hitTest(p);
       if (hit >= 0) {
         state.selected = hit;
@@ -1603,6 +2217,13 @@ HTML = r"""<!doctype html>
         applyZoom();
         return;
       }
+      if (state.resizing) {
+        evt.preventDefault();
+        state.boxes[state.resizing.index] = resizedBox(state.resizing.original, state.resizing.handle, canvasPoint(evt));
+        draw();
+        return;
+      }
+      updateHoverCursor(evt);
       if (!state.drawing) return;
       state.drawing.end = canvasPoint(evt);
       draw();
@@ -1615,12 +2236,26 @@ HTML = r"""<!doctype html>
         els.stage.style.cursor = 'default';
         return;
       }
+      if (state.resizing) {
+        state.resizing = null;
+        markDirty();
+        els.overlay.style.cursor = state.mode === 'pan' ? 'grab' : 'crosshair';
+        return;
+      }
       if (!state.drawing) return;
       const box = normBox(state.drawing.start, state.drawing.end);
       state.drawing = null;
       if (box.w >= 3 && box.h >= 3) {
-        state.boxes.push(box);
-        state.selected = state.boxes.length - 1;
+        const task = currentTask();
+        if (task.max_boxes === 1) {
+          state.boxes = [box];
+          state.selected = 0;
+        } else {
+          state.boxes.push(box);
+          state.selected = state.boxes.length - 1;
+        }
+        state.negative = false;
+        updateNegativeUi();
         markDirty();
       } else {
         draw();
@@ -1642,7 +2277,9 @@ HTML = r"""<!doctype html>
     }, { passive: false });
 
     els.saveBtn.onclick = save;
+    els.negativeBtn.onclick = toggleNegativeAnnotation;
     els.deleteBtn.onclick = deleteSelected;
+    els.runImagePredBtn.onclick = runModelOnCurrentImage;
     els.loadPredBtn.onclick = loadPredictions;
     els.trainBtn.onclick = trainNow;
     els.generatePredBtn.onclick = generatePredictionsNow;
@@ -1655,6 +2292,7 @@ HTML = r"""<!doctype html>
       if (state.boxes.length && confirm('Clear all boxes for this image?')) {
         state.boxes = [];
         state.selected = -1;
+        state.resizing = null;
         markDirty();
       }
     };
@@ -1670,6 +2308,27 @@ HTML = r"""<!doctype html>
     };
     els.fitBtn.onclick = fitZoom;
     els.modeBtn.onclick = () => setMode(state.mode === 'pan' ? 'draw' : 'pan');
+
+    els.taskSelect.addEventListener('change', async () => {
+      if (state.dirty) {
+        const ok = confirm('You have unsaved boxes. Continue without saving?');
+        if (!ok) {
+          els.taskSelect.value = state.task;
+          return;
+        }
+      }
+      state.task = els.taskSelect.value;
+      state.currentIndex = 0;
+      state.selected = -1;
+      state.drawing = null;
+      state.resizing = null;
+      state.dirty = false;
+      state.negative = false;
+      await refreshImages();
+      await loadCurrent();
+      renderList();
+      await refreshTrainStatus();
+    });
 
     for (const el of [els.cameraFilter, els.statusFilter, els.search]) {
       el.addEventListener('input', async () => {
@@ -1709,6 +2368,7 @@ HTML = r"""<!doctype html>
         goTo(state.currentIndex - 1);
       } else if (evt.key === 'Escape' && !typing) {
         state.drawing = null;
+        state.resizing = null;
         state.selected = -1;
         draw();
       }
@@ -1723,6 +2383,12 @@ HTML = r"""<!doctype html>
 
     async function boot() {
       try {
+        const taskData = await api('/api/tasks');
+        state.tasks = {};
+        for (const task of taskData.tasks || []) {
+          state.tasks[task.key] = task;
+        }
+        updateTaskHelp();
         await refreshImages();
         await loadCurrent();
         await refreshTrainStatus();
@@ -1769,37 +2435,50 @@ class AnnotatorHandler(BaseHTTPRequestHandler):
             if parsed.path in {"/", "/index.html"}:
                 self.send_text(HTML, content_type="text/html; charset=utf-8")
                 return
+            if parsed.path == "/api/tasks":
+                self.send_json({"tasks": [task.to_json() for task in list_tasks(self.paths)]})
+                return
             if parsed.path == "/api/images":
-                self.send_json({"images": build_image_items(self.paths)})
+                query = parse_qs(parsed.query)
+                task = task_config(self.paths, query.get("task", ["pipe_end"])[0])
+                self.send_json({"images": build_image_items(self.paths, task), "task": task.to_json()})
                 return
             if parsed.path == "/api/labels":
                 query = parse_qs(parsed.query)
+                task = task_config(self.paths, query.get("task", ["pipe_end"])[0])
                 rel = normalize_rel(query.get("path", [""])[0])
                 image_path = self.paths.images_root / rel
                 if not image_path.exists():
                     self.send_json({"error": "image not found"}, HTTPStatus.NOT_FOUND)
                     return
                 width, height = image_size(image_path)
-                label_path = (self.paths.labels_root / rel).with_suffix(".txt")
-                self.send_json({"boxes": yolo_to_boxes(label_path, width, height), "width": width, "height": height})
+                label_path = (task.labels_root / rel).with_suffix(".txt")
+                status = load_status(self.paths.status_path)
+                self.send_json(
+                    {
+                        "boxes": yolo_to_boxes(label_path, width, height),
+                        "width": width,
+                        "height": height,
+                        "negative": is_negative_annotation(status, task, rel),
+                    }
+                )
                 return
             if parsed.path == "/api/predictions":
                 query = parse_qs(parsed.query)
+                task = task_config(self.paths, query.get("task", ["pipe_end"])[0])
                 rel = normalize_rel(query.get("path", [""])[0])
                 image_path = self.paths.images_root / rel
                 if not image_path.exists():
                     self.send_json({"error": "image not found"}, HTTPStatus.NOT_FOUND)
                     return
                 width, height = image_size(image_path)
-                prediction_path = (self.paths.predictions_root / rel).with_suffix(".txt")
+                prediction_path = (task.predictions_root / rel).with_suffix(".txt")
                 self.send_json(
                     {
                         "boxes": yolo_to_boxes(prediction_path, width, height),
                         "width": width,
                         "height": height,
-                        "prediction_path": prediction_path.relative_to(self.paths.root).as_posix()
-                        if prediction_path.exists()
-                        else None,
+                        "prediction_path": repo_display_path(prediction_path) if prediction_path.exists() else None,
                     }
                 )
                 return
@@ -1917,11 +2596,15 @@ class AnnotatorHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/train":
                 reason = str(payload.get("reason", "manual request"))
-                self.send_json(schedule_training(self.paths, reason))
+                self.send_json(schedule_training(self.paths, reason, str(payload.get("task", "pipe_end"))))
                 return
             if parsed.path == "/api/generate-predictions":
                 reason = str(payload.get("reason", "manual request"))
-                self.send_json(schedule_prediction(self.paths, reason))
+                self.send_json(schedule_prediction(self.paths, reason, str(payload.get("task", "pipe_end"))))
+                return
+            if parsed.path == "/api/predict-current":
+                rel = normalize_rel(str(payload.get("path", "")))
+                self.send_json(run_single_image_prediction(self.paths, rel, str(payload.get("task", "pipe_end"))))
                 return
             if parsed.path == "/api/roi-save":
                 camera = str(payload.get("camera", "cam151"))
@@ -1939,23 +2622,39 @@ class AnnotatorHandler(BaseHTTPRequestHandler):
             if parsed.path != "/api/labels":
                 self.send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
                 return
+            task = task_config(self.paths, str(payload.get("task", "pipe_end")))
             rel = normalize_rel(str(payload.get("path", "")))
             image_path = self.paths.images_root / rel
             if not image_path.exists():
                 self.send_json({"error": "image not found"}, HTTPStatus.NOT_FOUND)
                 return
+            if task.camera_filter and (not rel.parts or rel.parts[0] != task.camera_filter):
+                self.send_json({"error": f"{task.label} only supports {task.camera_filter} images."}, HTTPStatus.BAD_REQUEST)
+                return
             width, height = image_size(image_path)
             boxes = payload.get("boxes", [])
             if not isinstance(boxes, list):
                 raise ValueError("boxes must be a list")
-            label_path = (self.paths.labels_root / rel).with_suffix(".txt")
+            negative = bool(payload.get("negative", False))
+            if negative and not task.allow_negative_labels:
+                raise ValueError(f"{task.label} does not support explicit negative annotations")
+            if negative:
+                boxes = []
+            if task.max_boxes is not None and len(boxes) > task.max_boxes:
+                raise ValueError(f"{task.label} supports at most {task.max_boxes} box per image")
+            label_path = (task.labels_root / rel).with_suffix(".txt")
             label_path.parent.mkdir(parents=True, exist_ok=True)
             label_path.write_text(boxes_to_yolo(boxes, width, height), encoding="utf-8")
+            status = load_status(self.paths.status_path)
+            negative = set_negative_annotation(status, task, rel, negative)
+            save_status(self.paths.status_path, status)
             self.send_json(
                 {
                     "ok": True,
-                    "label_path": label_path.relative_to(self.paths.root).as_posix(),
+                    "label_path": repo_display_path(label_path),
                     "count": len(boxes),
+                    "negative": negative,
+                    "task": task.to_json(),
                     "training": {"scheduled": False, "reason": "manual training only"},
                 }
             )
@@ -2031,6 +2730,11 @@ def main() -> None:
         raw_image_151=args.raw_image_151.resolve() if args.raw_image_151 else None,
         raw_image_152=args.raw_image_152.resolve() if args.raw_image_152 else None,
     )
+    for task in list_tasks(AnnotatorHandler.paths):
+        task.labels_root.mkdir(parents=True, exist_ok=True)
+        task.predictions_root.mkdir(parents=True, exist_ok=True)
+        task.work_root.mkdir(parents=True, exist_ok=True)
+        task.project_root.mkdir(parents=True, exist_ok=True)
     server = ThreadingHTTPServer((args.host, port), AnnotatorHandler)
     url = f"http://{args.host}:{port}/"
     print(f"Pipe End Annotator running at {url}")

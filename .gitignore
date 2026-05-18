@@ -2,6 +2,7 @@ __pycache__/
 config.json
 artifacts/
 .venv/
+.logs/
 pipe_end_detection/captures/
 pipe_end_detection/dataset/
 pipe_end_detection/logs/
@@ -11,6 +12,14 @@ pipe_end_detection/runs/
 models/
 runs/
 active_training/
+active_training_*/
+**/active_training/
+**/active_training_*/
+**/runs/
+**/predictions/
+**/debug_predict*/
+**/sam2_probe/
+**/single_image_runs/
 dataset/
 dataset_probe_*/
 predictions/
@@ -19,6 +28,10 @@ tmp_*/
 !models/
 !models/pipe_end_active/
 !models/pipe_end_active/best.pt
+!models/pipe_end_cam152_active/
+!models/pipe_end_cam152_active/best.pt
+!models/tube_bundle_edge_active/
+!models/tube_bundle_edge_active/best.pt
 server_stdout_cam_*.log
 server_stderr_cam_*.log
 *.log

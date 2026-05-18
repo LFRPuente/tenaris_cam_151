@@ -22,6 +22,13 @@ DEFAULT_CONTAINMENT_RATIO = 0.85
 DEFAULT_CONTAINED_CHILDREN = 2
 DEFAULT_VERTICAL_DUPLICATE_HEIGHT_RATIO = 0.50
 DEFAULT_VERTICAL_DUPLICATE_OVERLAP = 0.30
+DEFAULT_VERTICAL_DUPLICATE_Y_OVERLAP = 0.65
+DEFAULT_GAP_RECOVERY_ENABLED = True
+DEFAULT_GAP_RECOVERY_CONF = 0.05
+DEFAULT_GAP_RECOVERY_MIN_RATIO = 1.65
+DEFAULT_GAP_RECOVERY_MAX_RATIO = 4.25
+DEFAULT_GAP_RECOVERY_BAND_RATIO = 0.70
+DEFAULT_GAP_RECOVERY_MAX_MISSING_PER_GAP = 2
 DEFAULT_EDGE_MODE = "strongest"
 
 
@@ -92,6 +99,33 @@ def _iso_now() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
 
+def _bool_env(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return bool(default)
+    return str(raw).strip().lower() in {"1", "true", "yes", "on", "y", "enabled"}
+
+
+def _float_env(name: str, default: float) -> float:
+    raw = str(os.environ.get(name, "")).strip()
+    if not raw:
+        return float(default)
+    try:
+        return float(raw)
+    except ValueError:
+        return float(default)
+
+
+def _int_env(name: str, default: int) -> int:
+    raw = str(os.environ.get(name, "")).strip()
+    if not raw:
+        return int(default)
+    try:
+        return int(raw)
+    except ValueError:
+        return int(default)
+
+
 def resolve_model_path(model_path: str | Path | None = None) -> Path:
     if model_path:
         candidate = Path(model_path)
@@ -159,6 +193,16 @@ def _overlap_over_smaller(a: PipeEndPrediction, b: PipeEndPrediction) -> float:
     return float(_intersection_area(a, b) / denom)
 
 
+def _vertical_overlap_over_smaller(a: PipeEndPrediction, b: PipeEndPrediction) -> float:
+    y1 = max(float(a.y1), float(b.y1))
+    y2 = min(float(a.y2), float(b.y2))
+    intersection = max(0.0, y2 - y1)
+    denom = min(max(0.0, float(a.height)), max(0.0, float(b.height)))
+    if denom <= 1e-6:
+        return 0.0
+    return float(intersection / denom)
+
+
 def _copy_prediction(prediction: PipeEndPrediction, **updates: Any) -> PipeEndPrediction:
     data = {
         "class_id": prediction.class_id,
@@ -181,6 +225,16 @@ def _copy_prediction(prediction: PipeEndPrediction, **updates: Any) -> PipeEndPr
     return PipeEndPrediction(**data)
 
 
+def _median(values: list[float]) -> float | None:
+    clean = sorted(float(value) for value in values if float(value) > 1e-6)
+    if not clean:
+        return None
+    mid = len(clean) // 2
+    if len(clean) % 2:
+        return float(clean[mid])
+    return float(0.5 * (clean[mid - 1] + clean[mid]))
+
+
 def _postprocess_overlapping_predictions(
     predictions: list[PipeEndPrediction],
     *,
@@ -189,6 +243,7 @@ def _postprocess_overlapping_predictions(
     contained_children: int = DEFAULT_CONTAINED_CHILDREN,
     vertical_duplicate_height_ratio: float = DEFAULT_VERTICAL_DUPLICATE_HEIGHT_RATIO,
     vertical_duplicate_overlap: float = DEFAULT_VERTICAL_DUPLICATE_OVERLAP,
+    vertical_duplicate_y_overlap: float = DEFAULT_VERTICAL_DUPLICATE_Y_OVERLAP,
 ) -> tuple[list[PipeEndPrediction], dict[str, Any]]:
     valid = [pred for pred in predictions if _prediction_area(pred) > 1.0]
     removed_containers: set[int] = set()
@@ -218,7 +273,8 @@ def _postprocess_overlapping_predictions(
 
     keep.sort(key=lambda pred: pred.y_center)
     vertical_suppressed = 0
-    if vertical_duplicate_height_ratio > 0:
+    vertical_y_suppressed = 0
+    if vertical_duplicate_height_ratio > 0 or vertical_duplicate_y_overlap > 0:
         deduped: list[PipeEndPrediction] = []
         for pred in keep:
             if deduped:
@@ -228,21 +284,32 @@ def _postprocess_overlapping_predictions(
                 horizontal_gap = abs(float(pred.x_center) - float(previous.x_center))
                 horizontal_limit = 1.25 * max(float(pred.width), float(previous.width))
                 duplicate_overlap = _overlap_over_smaller(pred, previous)
-                is_duplicate = (
+                vertical_band_overlap = _vertical_overlap_over_smaller(pred, previous)
+                is_local_duplicate = (
                     vertical_gap < duplicate_gap
                     or duplicate_overlap >= float(vertical_duplicate_overlap)
                 )
-                if is_duplicate and horizontal_gap <= horizontal_limit:
+                is_same_y_band = vertical_band_overlap >= float(vertical_duplicate_y_overlap)
+                if (is_local_duplicate and horizontal_gap <= horizontal_limit) or is_same_y_band:
                     vertical_suppressed += 1
+                    if is_same_y_band and not (is_local_duplicate and horizontal_gap <= horizontal_limit):
+                        vertical_y_suppressed += 1
                     if float(pred.confidence) > float(previous.confidence):
                         deduped[-1] = _copy_prediction(
                             pred,
-                            postprocess_flags=tuple([*pred.postprocess_flags, "kept_vertical_duplicate"]),
+                            postprocess_flags=tuple(
+                                [*pred.postprocess_flags, "kept_vertical_y_duplicate" if is_same_y_band else "kept_vertical_duplicate"]
+                            ),
                         )
                     else:
                         deduped[-1] = _copy_prediction(
                             previous,
-                            postprocess_flags=tuple([*previous.postprocess_flags, "kept_vertical_duplicate"]),
+                            postprocess_flags=tuple(
+                                [
+                                    *previous.postprocess_flags,
+                                    "kept_vertical_y_duplicate" if is_same_y_band else "kept_vertical_duplicate",
+                                ]
+                            ),
                         )
                     continue
             deduped.append(pred)
@@ -254,13 +321,170 @@ def _postprocess_overlapping_predictions(
         "removed_large_containers": len(removed_containers),
         "suppressed_overlap": int(suppressed),
         "suppressed_vertical_duplicate": int(vertical_suppressed),
+        "suppressed_vertical_y_duplicate": int(vertical_y_suppressed),
         "final_count_before_refine": len(keep),
         "overlap_threshold": float(overlap_threshold),
         "vertical_duplicate_height_ratio": float(vertical_duplicate_height_ratio),
         "vertical_duplicate_overlap": float(vertical_duplicate_overlap),
+        "vertical_duplicate_y_overlap": float(vertical_duplicate_y_overlap),
         "containment_ratio": float(containment_ratio),
         "contained_children": int(contained_children),
     }
+
+
+def _prediction_from_xyxy(
+    coords: list[float] | tuple[float, float, float, float],
+    confidence: float,
+    *,
+    flags: tuple[str, ...] = (),
+) -> PipeEndPrediction:
+    x1, y1, x2, y2 = [float(value) for value in coords]
+    width = max(0.0, x2 - x1)
+    height = max(0.0, y2 - y1)
+    return PipeEndPrediction(
+        class_id=PIPE_END_CLASS_ID,
+        class_name=PIPE_END_CLASS_NAME,
+        confidence=float(confidence),
+        x1=x1,
+        y1=y1,
+        x2=x2,
+        y2=y2,
+        x_center=x1 + 0.5 * width,
+        y_center=y1 + 0.5 * height,
+        width=width,
+        height=height,
+        postprocess_flags=flags,
+    )
+
+
+def _estimate_gap_recovery_pitch(predictions: list[PipeEndPrediction]) -> float | None:
+    if len(predictions) < 2:
+        return None
+    ordered = sorted(predictions, key=lambda pred: float(pred.y_center))
+    gaps = [
+        abs(float(ordered[idx + 1].y_center) - float(ordered[idx].y_center))
+        for idx in range(len(ordered) - 1)
+    ]
+    raw_gap = _median(gaps)
+    heights = _median([float(pred.height) for pred in ordered])
+    if raw_gap is None:
+        return None if heights is None else 1.15 * float(heights)
+    robust_gaps = [gap for gap in gaps if 0.45 * raw_gap <= gap <= 1.75 * raw_gap]
+    pitch = _median(robust_gaps) or raw_gap
+    if heights is not None:
+        pitch = max(float(pitch), 1.10 * float(heights))
+    return float(pitch)
+
+
+def _gap_recovery_candidate_is_duplicate(
+    candidate: PipeEndPrediction,
+    existing: list[PipeEndPrediction],
+    *,
+    expected_pitch: float,
+) -> bool:
+    for pred in existing:
+        if _overlap_over_smaller(candidate, pred) >= 0.20:
+            return True
+        if _vertical_overlap_over_smaller(candidate, pred) >= 0.70:
+            return True
+        if abs(float(candidate.y_center) - float(pred.y_center)) <= 0.35 * float(expected_pitch):
+            return True
+    return False
+
+
+def _recover_gap_predictions(
+    image_path: Path,
+    yolo: Any,
+    predictions: list[PipeEndPrediction],
+    predict_kwargs: dict[str, Any],
+    *,
+    recovery_conf: float,
+    min_gap_ratio: float,
+    max_gap_ratio: float,
+    band_ratio: float,
+    max_missing_per_gap: int,
+) -> tuple[list[PipeEndPrediction], dict[str, Any]]:
+    meta: dict[str, Any] = {
+        "enabled": True,
+        "attempted_gaps": 0,
+        "candidate_count": 0,
+        "recovered_count": 0,
+        "conf": float(recovery_conf),
+        "min_gap_ratio": float(min_gap_ratio),
+        "max_gap_ratio": float(max_gap_ratio),
+        "band_ratio": float(band_ratio),
+    }
+    if len(predictions) < 2:
+        return [], meta
+
+    image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+    if image is None or image.size == 0:
+        return [], meta
+    image_h, image_w = image.shape[:2]
+    ordered = sorted(predictions, key=lambda pred: float(pred.y_center))
+    fallback_pitch = _estimate_gap_recovery_pitch(ordered)
+    if fallback_pitch is None or fallback_pitch <= 1e-6:
+        return [], meta
+
+    recovered: list[PipeEndPrediction] = []
+    max_missing = max(1, int(max_missing_per_gap))
+    for lower_idx in range(len(ordered) - 1):
+        top_pred = ordered[lower_idx]
+        bottom_pred = ordered[lower_idx + 1]
+        gap = abs(float(bottom_pred.y_center) - float(top_pred.y_center))
+        local_height = _median([float(top_pred.height), float(bottom_pred.height)]) or fallback_pitch
+        expected_pitch = max(float(fallback_pitch), 1.10 * float(local_height))
+        if expected_pitch <= 1e-6:
+            continue
+        gap_ratio = gap / expected_pitch
+        if gap_ratio < float(min_gap_ratio) or gap_ratio > float(max_gap_ratio):
+            continue
+        missing_count = min(max_missing, max(1, int(round(gap_ratio)) - 1))
+        for missing_idx in range(missing_count):
+            target_y = float(top_pred.y_center) + (missing_idx + 1) * gap / (missing_count + 1)
+            band_half = max(8.0, 0.5 * float(band_ratio) * expected_pitch)
+            y0 = max(0, int(round(target_y - band_half)))
+            y1 = min(image_h, int(round(target_y + band_half)))
+            if y1 <= y0 + 4:
+                continue
+            meta["attempted_gaps"] += 1
+            crop = image[y0:y1, 0:image_w]
+            crop_kwargs = dict(predict_kwargs)
+            crop_kwargs["conf"] = float(recovery_conf)
+            crop_kwargs["max_det"] = min(int(crop_kwargs.get("max_det", 256)), 48)
+            raw_results = yolo.predict(crop, **crop_kwargs)
+            candidates: list[PipeEndPrediction] = []
+            if raw_results:
+                result = raw_results[0]
+                boxes = getattr(result, "boxes", None)
+                if boxes is not None and boxes.xyxy is not None:
+                    xyxy = boxes.xyxy.cpu().numpy()
+                    cls = boxes.cls.cpu().numpy()
+                    scores = boxes.conf.cpu().numpy()
+                    for class_id, coords, score in zip(cls, xyxy, scores):
+                        if int(class_id) != PIPE_END_CLASS_ID:
+                            continue
+                        x1, local_y1, x2, local_y2 = [float(value) for value in coords]
+                        candidate = _prediction_from_xyxy(
+                            [x1, local_y1 + y0, x2, local_y2 + y0],
+                            float(score),
+                            flags=("gap_recovered",),
+                        )
+                        if abs(float(candidate.y_center) - target_y) > 0.65 * expected_pitch:
+                            continue
+                        if _gap_recovery_candidate_is_duplicate(
+                            candidate,
+                            [*ordered, *recovered],
+                            expected_pitch=expected_pitch,
+                        ):
+                            continue
+                        candidates.append(candidate)
+            meta["candidate_count"] += len(candidates)
+            if candidates:
+                recovered.append(max(candidates, key=lambda pred: float(pred.confidence)))
+
+    meta["recovered_count"] = len(recovered)
+    return recovered, meta
 
 
 def _smooth_profile(profile: np.ndarray) -> np.ndarray:
@@ -470,14 +694,15 @@ def run_pipe_end_inference(
                 )
 
     raw_prediction_count = len(predictions)
-    overlap_threshold = float(os.environ.get("PIPE_END_YOLO_OVERLAP_THRESHOLD", DEFAULT_OVERLAP_SUPPRESSION))
-    containment_ratio = float(os.environ.get("PIPE_END_YOLO_CONTAINMENT_RATIO", DEFAULT_CONTAINMENT_RATIO))
-    contained_children = int(os.environ.get("PIPE_END_YOLO_CONTAINED_CHILDREN", DEFAULT_CONTAINED_CHILDREN))
-    vertical_duplicate_height_ratio = float(
-        os.environ.get("PIPE_END_YOLO_VERTICAL_DUPLICATE_HEIGHT_RATIO", DEFAULT_VERTICAL_DUPLICATE_HEIGHT_RATIO)
+    overlap_threshold = _float_env("PIPE_END_YOLO_OVERLAP_THRESHOLD", DEFAULT_OVERLAP_SUPPRESSION)
+    containment_ratio = _float_env("PIPE_END_YOLO_CONTAINMENT_RATIO", DEFAULT_CONTAINMENT_RATIO)
+    contained_children = _int_env("PIPE_END_YOLO_CONTAINED_CHILDREN", DEFAULT_CONTAINED_CHILDREN)
+    vertical_duplicate_height_ratio = _float_env(
+        "PIPE_END_YOLO_VERTICAL_DUPLICATE_HEIGHT_RATIO", DEFAULT_VERTICAL_DUPLICATE_HEIGHT_RATIO
     )
-    vertical_duplicate_overlap = float(
-        os.environ.get("PIPE_END_YOLO_VERTICAL_DUPLICATE_OVERLAP", DEFAULT_VERTICAL_DUPLICATE_OVERLAP)
+    vertical_duplicate_overlap = _float_env("PIPE_END_YOLO_VERTICAL_DUPLICATE_OVERLAP", DEFAULT_VERTICAL_DUPLICATE_OVERLAP)
+    vertical_duplicate_y_overlap = _float_env(
+        "PIPE_END_YOLO_VERTICAL_DUPLICATE_Y_OVERLAP", DEFAULT_VERTICAL_DUPLICATE_Y_OVERLAP
     )
     edge_mode = str(os.environ.get("PIPE_END_YOLO_EDGE_MODE", DEFAULT_EDGE_MODE)).strip().lower() or DEFAULT_EDGE_MODE
     predictions, postprocess = _postprocess_overlapping_predictions(
@@ -487,7 +712,35 @@ def run_pipe_end_inference(
         contained_children=contained_children,
         vertical_duplicate_height_ratio=vertical_duplicate_height_ratio,
         vertical_duplicate_overlap=vertical_duplicate_overlap,
+        vertical_duplicate_y_overlap=vertical_duplicate_y_overlap,
     )
+    gap_recovery_meta: dict[str, Any] = {"enabled": False}
+    if _bool_env("PIPE_END_YOLO_GAP_RECOVERY_ENABLED", DEFAULT_GAP_RECOVERY_ENABLED):
+        recovery_conf = _float_env("PIPE_END_YOLO_GAP_RECOVERY_CONF", min(DEFAULT_GAP_RECOVERY_CONF, float(conf)))
+        recovered, gap_recovery_meta = _recover_gap_predictions(
+            image,
+            yolo,
+            predictions,
+            predict_kwargs,
+            recovery_conf=recovery_conf,
+            min_gap_ratio=_float_env("PIPE_END_YOLO_GAP_RECOVERY_MIN_RATIO", DEFAULT_GAP_RECOVERY_MIN_RATIO),
+            max_gap_ratio=_float_env("PIPE_END_YOLO_GAP_RECOVERY_MAX_RATIO", DEFAULT_GAP_RECOVERY_MAX_RATIO),
+            band_ratio=_float_env("PIPE_END_YOLO_GAP_RECOVERY_BAND_RATIO", DEFAULT_GAP_RECOVERY_BAND_RATIO),
+            max_missing_per_gap=_int_env(
+                "PIPE_END_YOLO_GAP_RECOVERY_MAX_MISSING_PER_GAP", DEFAULT_GAP_RECOVERY_MAX_MISSING_PER_GAP
+            ),
+        )
+        if recovered:
+            predictions, gap_postprocess = _postprocess_overlapping_predictions(
+                [*predictions, *recovered],
+                overlap_threshold=overlap_threshold,
+                containment_ratio=containment_ratio,
+                contained_children=contained_children,
+                vertical_duplicate_height_ratio=vertical_duplicate_height_ratio,
+                vertical_duplicate_overlap=vertical_duplicate_overlap,
+                vertical_duplicate_y_overlap=vertical_duplicate_y_overlap,
+            )
+            gap_recovery_meta["postprocess"] = gap_postprocess
     predictions = _refine_predictions_with_sobel_x(image, predictions, edge_mode=edge_mode)
     predictions.sort(key=lambda pred: pred.y_center)
     postprocess.update(
@@ -495,6 +748,7 @@ def run_pipe_end_inference(
             "final_count": len(predictions),
             "edge_refinement": "sobel_x",
             "edge_mode": edge_mode,
+            "gap_recovery": gap_recovery_meta,
         }
     )
     overlay_path = output / f"{image.stem}_pipe_end_yolo_overlay.jpg"

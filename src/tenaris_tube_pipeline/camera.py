@@ -90,11 +90,36 @@ def _pipe_end_yolo_device() -> str | None:
     return raw or None
 
 
+def _float_env(name: str, default: float) -> float:
+    raw = str(os.environ.get(name, "")).strip()
+    if not raw:
+        return float(default)
+    try:
+        return float(raw)
+    except ValueError:
+        return float(default)
+
+
+def _pipe_end_yolo_conf(result: TubeDetectionPreviewResult) -> float:
+    camera_key = "CAM152" if result.processing_mode == "cam152" else "CAM151"
+    default = 0.05 if camera_key == "CAM152" else 0.10
+    camera_specific = f"PIPE_END_YOLO_CONF_{camera_key}"
+    if str(os.environ.get(camera_specific, "")).strip():
+        return _float_env(camera_specific, default)
+    return _float_env("PIPE_END_YOLO_CONF", default)
+
+
+def _pipe_end_yolo_iou() -> float:
+    return _float_env("PIPE_END_YOLO_IOU", 0.50)
+
+
 def _apply_pipe_end_yolo_detection(result: TubeDetectionPreviewResult, output_dir: Path) -> PipeEndInferenceResult:
     yolo_output_dir = output_dir / "pipe_end_yolo"
     yolo_result = run_pipe_end_inference(
         result.homography.warp_path,
         yolo_output_dir,
+        conf=_pipe_end_yolo_conf(result),
+        iou=_pipe_end_yolo_iou(),
         device=_pipe_end_yolo_device(),
     )
     x_start_list = predictions_to_x_start_list(yolo_result.predictions)
@@ -153,7 +178,9 @@ def build_tube_measurements(result: TubeDetectionPreviewResult) -> list[dict[str
             if passthrough_key in item:
                 measurement[passthrough_key] = item[passthrough_key]
         if result.processing_mode == "cam152":
-            measurement["relative_position"] = "before" if offset_px < 0 else "after"
+            # cam152 is mirrored in the backend for cam_152_* images, so a
+            # negative warp offset represents the far/right-side extension.
+            measurement["relative_position"] = "after" if offset_px < 0 else "before"
         measurements.append(measurement)
 
     measurements.sort(key=lambda row: int(row["tube_idx"]))

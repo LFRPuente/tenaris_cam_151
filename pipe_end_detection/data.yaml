@@ -1,4 +1,4 @@
-path: .
+path: pipe_end_detection
 train: dataset/images/train
 val: dataset/images/val
 test: dataset/images/test

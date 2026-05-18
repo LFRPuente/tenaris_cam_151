@@ -157,7 +157,7 @@ def _normalize_measurement_item(side: str, raw_item: Any, position: int) -> dict
         if raw_relative_position in {"before", "after"}:
             relative_position = raw_relative_position
         else:
-            relative_position = "before" if offset_px is not None and offset_px < 0 else "after"
+            relative_position = "after" if offset_px is not None and offset_px < 0 else "before"
     else:
         relative_position = None
 
@@ -595,7 +595,7 @@ def _best_slot_offset(
     return best_offset
 
 
-def build_match_rows(
+def _build_slot_match_rows(
     left_items: list[dict[str, Any]],
     right_items: list[dict[str, Any]],
     *,
@@ -651,16 +651,121 @@ def build_match_rows(
     return rows
 
 
+def _build_order_match_rows(left_items: list[dict[str, Any]], right_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    left_queue = _ordered_active_items(left_items)
+    right_queue = _ordered_active_items(right_items)
+    rows: list[dict[str, Any]] = []
+    row_number = 1
+    max_count = max(len(left_queue), len(right_queue))
+    for idx in range(max_count):
+        left_item = left_queue[idx] if idx < len(left_queue) else None
+        right_item = right_queue[idx] if idx < len(right_queue) else None
+        if left_item is not None and left_item.get("unmatched"):
+            right_item = None
+            status = "left_only_manual"
+        elif right_item is not None and right_item.get("unmatched"):
+            left_item = None
+            status = "right_only_manual"
+        elif left_item is not None and right_item is not None:
+            status = "matched"
+        elif left_item is not None:
+            status = "left_only"
+        else:
+            status = "right_only"
+        rows.append(_build_result_row(row_number, left_item, right_item, status))
+        row_number += 1
+    return rows
+
+
+def _dataset_uses_yolo(dataset: dict[str, Any] | None, items: list[dict[str, Any]]) -> bool:
+    if isinstance(dataset, dict):
+        extra_meta = dataset.get("extra_meta")
+        if isinstance(extra_meta, dict):
+            if str(extra_meta.get("detection_source") or "") == "yolo_pipe_end":
+                return True
+            if isinstance(extra_meta.get("pipe_end_yolo"), dict):
+                return True
+    return any(str((item.get("source_measurement") or {}).get("source") or "") == "yolo_pipe_end" for item in items)
+
+
+def _matched_count(rows: list[dict[str, Any]]) -> int:
+    return sum(1 for row in rows if row.get("match_status") == "matched")
+
+
+def _select_match_rows(
+    left_items: list[dict[str, Any]],
+    right_items: list[dict[str, Any]],
+    *,
+    left_dataset: dict[str, Any] | None = None,
+    right_dataset: dict[str, Any] | None = None,
+) -> tuple[list[dict[str, Any]], str, dict[str, Any]]:
+    left_slots = _assign_vertical_slots(left_items, left_dataset)
+    right_slots = _assign_vertical_slots(right_items, right_dataset)
+    right_offset = _best_slot_offset(left_slots, right_slots, right_dataset)
+    slot_rows = _build_slot_match_rows(
+        left_items,
+        right_items,
+        left_dataset=left_dataset,
+        right_dataset=right_dataset,
+    )
+
+    order_rows = _build_order_match_rows(left_items, right_items)
+    left_count = len(_ordered_active_items(left_items))
+    right_count = len(_ordered_active_items(right_items))
+    count_ratio = (min(left_count, right_count) / max(left_count, right_count)) if max(left_count, right_count) else 0.0
+    use_order = (
+        _dataset_uses_yolo(left_dataset, left_items)
+        and _dataset_uses_yolo(right_dataset, right_items)
+        and min(left_count, right_count) >= 8
+        and count_ratio >= 0.70
+        and _matched_count(order_rows) > _matched_count(slot_rows)
+    )
+    if use_order:
+        return (
+            order_rows,
+            "yolo_vertical_order_balanced",
+            {
+                "cam152_slot_offset": int(right_offset),
+                "slot_matched": int(_matched_count(slot_rows)),
+                "order_matched": int(_matched_count(order_rows)),
+                "count_ratio": float(count_ratio),
+            },
+        )
+    return (
+        slot_rows,
+        "auto_vertical_slot_alignment_local_box_pitch_cam151_number_anchor",
+        {
+            "cam152_slot_offset": int(right_offset),
+            "slot_matched": int(_matched_count(slot_rows)),
+            "order_matched": int(_matched_count(order_rows)),
+            "count_ratio": float(count_ratio),
+        },
+    )
+
+
+def build_match_rows(
+    left_items: list[dict[str, Any]],
+    right_items: list[dict[str, Any]],
+    *,
+    left_dataset: dict[str, Any] | None = None,
+    right_dataset: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    rows, _strategy, _debug = _select_match_rows(
+        left_items,
+        right_items,
+        left_dataset=left_dataset,
+        right_dataset=right_dataset,
+    )
+    return rows
+
+
 def build_result_payload(
     left_dataset: dict[str, Any],
     right_dataset: dict[str, Any],
     left_items: list[dict[str, Any]],
     right_items: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    left_slots = _assign_vertical_slots(left_items, left_dataset)
-    right_slots = _assign_vertical_slots(right_items, right_dataset)
-    right_offset = _best_slot_offset(left_slots, right_slots, right_dataset)
-    match_rows = build_match_rows(
+    match_rows, matching_strategy, matching_debug = _select_match_rows(
         left_items,
         right_items,
         left_dataset=left_dataset,
@@ -702,10 +807,8 @@ def build_result_payload(
             },
         },
         "summary": summary,
-        "matching_strategy": "auto_vertical_slot_alignment_local_box_pitch_cam151_number_anchor",
-        "matching_debug": {
-            "cam152_slot_offset": int(right_offset),
-        },
+        "matching_strategy": matching_strategy,
+        "matching_debug": matching_debug,
         "left_items": left_items,
         "right_items": right_items,
         "rows": match_rows,
