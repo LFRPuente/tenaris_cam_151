@@ -425,6 +425,64 @@ def _ordered_active_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     )
 
 
+def _y_bounds_from_value(value: Any) -> tuple[float, float] | None:
+    if isinstance(value, dict):
+        top = _float_or_none(value.get("top", value.get("y_min", value.get("min_y"))))
+        bottom = _float_or_none(value.get("bottom", value.get("y_max", value.get("max_y"))))
+    elif isinstance(value, list) and len(value) >= 2:
+        top = _float_or_none(value[0])
+        bottom = _float_or_none(value[1])
+    else:
+        return None
+    if top is None or bottom is None:
+        return None
+    low = min(float(top), float(bottom))
+    high = max(float(top), float(bottom))
+    if high <= low + 1e-6:
+        return None
+    return low, high
+
+
+def _dataset_bundle_y_bounds(dataset: dict[str, Any] | None) -> tuple[float, float] | None:
+    if not isinstance(dataset, dict):
+        return None
+    extra_meta = dataset.get("extra_meta")
+    if not isinstance(extra_meta, dict):
+        return None
+
+    direct_keys = (
+        "sam_bundle_bounds_y",
+        "sam_boundary_bounds_y",
+        "bundle_bounds_y",
+        "recovery_bounds_y",
+    )
+    for key in direct_keys:
+        bounds = _y_bounds_from_value(extra_meta.get(key))
+        if bounds is not None:
+            return bounds
+
+    sam_boundary = extra_meta.get("sam_boundary")
+    if isinstance(sam_boundary, dict):
+        for key in direct_keys:
+            bounds = _y_bounds_from_value(sam_boundary.get(key))
+            if bounds is not None:
+                return bounds
+
+    yolo_meta = extra_meta.get("pipe_end_yolo")
+    if isinstance(yolo_meta, dict):
+        bounds = _y_bounds_from_value(yolo_meta.get("recovery_bounds_y"))
+        if bounds is not None:
+            return bounds
+        postprocess = yolo_meta.get("postprocess")
+        if isinstance(postprocess, dict):
+            edge_gap = postprocess.get("edge_gap_recovery")
+            if isinstance(edge_gap, dict):
+                bounds = _y_bounds_from_value(edge_gap.get("bounds_y"))
+                if bounds is not None:
+                    return bounds
+    return None
+
+
 def _median(values: list[float]) -> float | None:
     clean = sorted(float(value) for value in values if value is not None and float(value) > 1e-6)
     if not clean:
@@ -542,6 +600,66 @@ def _assign_vertical_slots(items: list[dict[str, Any]], dataset: dict[str, Any] 
     return _drop_detached_top_slots(slots)
 
 
+def _item_bundle_position(item: dict[str, Any], bounds_y: tuple[float, float]) -> float | None:
+    y_center = _item_y_center(item)
+    if y_center is None:
+        return None
+    top, bottom = bounds_y
+    height = float(bottom) - float(top)
+    if height <= 1e-6:
+        return None
+    # 0.0 is bundle bottom; 1.0 is bundle top. This makes both cameras share
+    # a comparable physical axis even if their pixel heights differ.
+    return max(0.0, min(1.0, (float(bottom) - float(y_center)) / height))
+
+
+def _estimate_bundle_pitch_norm(items: list[dict[str, Any]], bounds_y: tuple[float, float]) -> float | None:
+    positions = sorted(
+        position
+        for item in items
+        if (position := _item_bundle_position(item, bounds_y)) is not None
+    )
+    if len(positions) < 2:
+        return None
+    gaps = [positions[idx + 1] - positions[idx] for idx in range(len(positions) - 1) if positions[idx + 1] > positions[idx]]
+    raw_pitch = _median(gaps)
+    if raw_pitch is None:
+        return None
+    robust_gaps = [gap for gap in gaps if 0.35 * raw_pitch <= gap <= 2.25 * raw_pitch]
+    return _median(robust_gaps) or raw_pitch
+
+
+def _assign_bundle_normalized_slots(
+    items: list[dict[str, Any]],
+    dataset: dict[str, Any] | None = None,
+) -> tuple[list[tuple[int, dict[str, Any]]], dict[str, Any]]:
+    bounds = _dataset_bundle_y_bounds(dataset)
+    debug: dict[str, Any] = {
+        "available": bounds is not None,
+        "bounds_y": None if bounds is None else [float(bounds[0]), float(bounds[1])],
+    }
+    ordered = _ordered_active_items(items)
+    if not ordered or bounds is None:
+        return [], debug
+    if any(_item_bundle_position(item, bounds) is None for item in ordered):
+        return [], debug
+
+    pitch_norm = _estimate_bundle_pitch_norm(ordered, bounds)
+    debug["pitch_norm"] = pitch_norm
+    if pitch_norm is None or pitch_norm <= 1e-6:
+        return [], debug
+    debug["item_count"] = len(ordered)
+
+    slots: list[tuple[int, dict[str, Any]]] = []
+    for item in ordered:
+        position = _item_bundle_position(item, bounds)
+        if position is None:
+            continue
+        slot = int(round(float(position) / float(pitch_norm))) + 1
+        slots.append((max(1, slot), item))
+    return _drop_detached_top_slots(slots), debug
+
+
 def _drop_detached_top_slots(slots: list[tuple[int, dict[str, Any]]]) -> list[tuple[int, dict[str, Any]]]:
     ordered = sorted(slots, key=lambda item: int(item[0]))
     while len(ordered) >= 2:
@@ -601,9 +719,11 @@ def _build_slot_match_rows(
     *,
     left_dataset: dict[str, Any] | None = None,
     right_dataset: dict[str, Any] | None = None,
+    left_slots_override: list[tuple[int, dict[str, Any]]] | None = None,
+    right_slots_override: list[tuple[int, dict[str, Any]]] | None = None,
 ) -> list[dict[str, Any]]:
-    left_slots = _assign_vertical_slots(left_items, left_dataset)
-    right_slots = _assign_vertical_slots(right_items, right_dataset)
+    left_slots = left_slots_override if left_slots_override is not None else _assign_vertical_slots(left_items, left_dataset)
+    right_slots = right_slots_override if right_slots_override is not None else _assign_vertical_slots(right_items, right_dataset)
     left_by_slot: dict[int, list[dict[str, Any]]] = {}
     right_by_slot: dict[int, list[dict[str, Any]]] = {}
     for slot, item in left_slots:
@@ -699,6 +819,29 @@ def _select_match_rows(
     left_dataset: dict[str, Any] | None = None,
     right_dataset: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], str, dict[str, Any]]:
+    left_bundle_slots, left_bundle_debug = _assign_bundle_normalized_slots(left_items, left_dataset)
+    right_bundle_slots, right_bundle_debug = _assign_bundle_normalized_slots(right_items, right_dataset)
+    if left_bundle_slots and right_bundle_slots:
+        right_bundle_offset = _best_slot_offset(left_bundle_slots, right_bundle_slots, right_dataset)
+        bundle_rows = _build_slot_match_rows(
+            left_items,
+            right_items,
+            left_dataset=left_dataset,
+            right_dataset=right_dataset,
+            left_slots_override=left_bundle_slots,
+            right_slots_override=right_bundle_slots,
+        )
+        return (
+            bundle_rows,
+            "sam_bundle_normalized_vertical_slots",
+            {
+                "cam152_slot_offset": int(right_bundle_offset),
+                "matched": int(_matched_count(bundle_rows)),
+                "cam151_bundle": left_bundle_debug,
+                "cam152_bundle": right_bundle_debug,
+            },
+        )
+
     left_slots = _assign_vertical_slots(left_items, left_dataset)
     right_slots = _assign_vertical_slots(right_items, right_dataset)
     right_offset = _best_slot_offset(left_slots, right_slots, right_dataset)

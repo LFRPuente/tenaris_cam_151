@@ -31,11 +31,13 @@ Local MVP for downloading camera pairs, processing tube measurements, matching b
 - `pipe_end_detection/ANNOTATION_GUIDE.md`: labeling rules.
 - `src/pipe_end_yolo/inference.py`: experimental runtime YOLO inference hook for the processing pipeline.
 
-Current production default:
+Current runtime default:
 
-- The MVP uses the classical/notebook-style detector.
-- YOLO `pipe_end` inference is present as an experimental hook but is disabled by default.
-- Before YOLO becomes the production detector, it must be validated in the notebooks against multiple history images from both cameras.
+- The backend enables YOLO `pipe_end` by default unless `PIPE_END_YOLO_ENABLED=0` is set.
+- The classical/notebook-style detector remains available as a fallback.
+- Runtime YOLO post-processing includes overlap/duplicate suppression, gap recovery, SAM-boundary edge recovery, large-box Sobel-Y splitting, lateral outlier confidence filtering, and Sobel-X edge refinement.
+- SAM is currently used as a prompted boundary segmenter with base `sam2.1_s.pt`; it is not fine-tuned.
+- The matcher can use SAM-normalized bundle height when both camera datasets export SAM Y-bounds.
 
 Runtime controls:
 
@@ -48,7 +50,10 @@ Runtime controls:
 - `PIPE_END_YOLO_VERTICAL_DUPLICATE_Y_OVERLAP`: suppresses boxes that occupy the same vertical band.
 - `PIPE_END_YOLO_GAP_RECOVERY_ENABLED`: enables/disables the second-pass YOLO search in vertical gaps.
 - `PIPE_END_YOLO_GAP_RECOVERY_CONF`: confidence threshold for the gap-recovery pass.
-- `PIPE_END_YOLO_ENABLED=1`: enables YOLO tube-start detection for experimental processing.
+- `PIPE_END_YOLO_EDGE_GAP_RECOVERY_ENABLED`: enables/disables recovery near SAM top/bottom bounds.
+- `PIPE_END_YOLO_LARGE_BOX_SPLIT_ENABLED`: enables/disables Sobel-Y splitting for locally oversized boxes.
+- `PIPE_END_YOLO_FAR_X_CONF_FILTER_ENABLED`: requires higher confidence for lateral X outliers.
+- `PIPE_END_YOLO_ENABLED=0`: disables YOLO and falls back to the classical detector.
 
 Large local data is intentionally ignored:
 
@@ -68,4 +73,4 @@ Important docs:
 
 ## Next Development Rule
 
-Before changing the MVP to use YOLO as the primary source of individual tube starts, validate YOLO inside the cam151/cam152 notebooks on the same homography warp images used by the classical pipeline. Keep `PIPE_END_YOLO_ENABLED=0` unless running an explicit experiment.
+When changing pipe-end logic, validate both cameras on representative captures and inspect the match strategy. If SAM bounds are available for both camera exports, the matcher should report `sam_bundle_normalized_vertical_slots`; otherwise it falls back to local vertical-slot matching.

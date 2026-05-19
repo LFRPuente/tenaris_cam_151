@@ -982,3 +982,162 @@ Recommended next work:
 - rerun MVP processing on recent captures and inspect `Diagram` vs `Full View`;
 - if homography drift remains large, create/save a new homography profile and make the MVP choose the right profile by date/run.
 
+---
+
+## 27. Pipe-End YOLO + SAM Boundary Handoff State (2026-05-19)
+
+This section supersedes the YOLO / SAM operational notes above for the current local code state.
+
+### 27.1 Active Models And Annotator
+
+The local pipe-end annotator runs at:
+
+```text
+http://127.0.0.1:8765/
+```
+
+The annotator dropdown is intentionally limited to:
+
+- `pipe_end | cam151 model`
+- `pipe_end | cam152 model`
+
+The older `tube_bundle` and `tube_bundle_edge` tasks were removed from the active annotator dropdown. Their model files may still exist locally, but they are not part of the current annotation workflow.
+
+Active model locations:
+
+- cam151 pipe-end model: `models/pipe_end_active/best.pt`
+- cam152 pipe-end model: `models/pipe_end_cam152_active/best.pt`
+- SAM boundary model: base `sam2.1_s.pt`
+
+SAM is not fine-tuned in the current pipeline. It is used as a prompted segmenter. The current bottleneck was prompt construction and pipe-end post-processing, not SAM mask quality after a good prompt.
+
+### 27.2 Current SAM Boundary Strategy
+
+The current SAM boundary flow is driven from pipe-end detections, not from a YOLO tube-bundle box.
+
+Important behavior:
+
+- `Pipe-end SAM` runs YOLO pipe-end prediction first;
+- outlier pipe-end boxes are removed using robust Y-spacing statistics from the annotation labels;
+- the SAM prompt is a wide context box from the image left edge through the pipe-end strip, bounded vertically by the upper/lower pipe-end span;
+- the returned mask is cropped back to the pipe-end strip to avoid grabbing vertical structures;
+- the resulting boundary JSON is stored under `sam_boundary_detection/sam2p1_boundary_app/boundaries/`;
+- the app then reruns pipe-end prediction so YOLO can use the SAM vertical bounds for top/bottom recovery.
+
+Relevant implementation:
+
+- `apps/pipe_end_annotator/annotate_app.py`
+- `run_sam_boundary(...)`
+- `_select_pipe_end_bundle_cluster(...)`
+- `_task_pipe_end_spacing_stats(...)`
+- `_latest_sam_recovery_bounds_y(...)`
+
+### 27.3 Pipe-End YOLO Post-Processing Added
+
+Runtime pipe-end inference now does more than a single YOLO call.
+
+Current post-processing in `src/pipe_end_yolo/inference.py` includes:
+
+- overlap / containment suppression;
+- vertical duplicate suppression;
+- isolated Y-cluster filtering using annotation-derived spacing stats when available;
+- gap recovery inside missing vertical slots;
+- edge recovery near the SAM top/bottom bounds;
+- large-box splitting with Sobel-Y;
+- lateral outlier confidence filtering;
+- Sobel-X refinement of accepted pipe-end x positions.
+
+Large-box splitting is conservative:
+
+- a box must be large relative to local neighbors;
+- if the immediate lower neighbor is far to the left, the large box is treated as normal perspective / stack curvature and is not split;
+- if the lower neighbor is close in X, Sobel-Y checks for a horizontal separator and splits only when enough evidence exists.
+
+The lateral outlier filter is also conservative:
+
+- a pipe-end box far from the X line implied by its upper/lower neighbors must meet a higher confidence threshold;
+- high-confidence lateral outliers are kept and tagged as `kept_far_x_high_conf`;
+- low-confidence lateral outliers are removed.
+
+Useful environment toggles:
+
+- `PIPE_END_YOLO_ISOLATED_FILTER_ENABLED`
+- `PIPE_END_YOLO_GAP_RECOVERY_ENABLED`
+- `PIPE_END_YOLO_EDGE_GAP_RECOVERY_ENABLED`
+- `PIPE_END_YOLO_LARGE_BOX_SPLIT_ENABLED`
+- `PIPE_END_YOLO_LARGE_BOX_SPLIT_CLOSE_X_RATIO`
+- `PIPE_END_YOLO_LARGE_BOX_SPLIT_MIN_CLOSE_X_PX`
+- `PIPE_END_YOLO_FAR_X_CONF_FILTER_ENABLED`
+- `PIPE_END_YOLO_FAR_X_CONF_FILTER_DISTANCE_RATIO`
+- `PIPE_END_YOLO_FAR_X_CONF_FILTER_MIN_DISTANCE_PX`
+- `PIPE_END_YOLO_FAR_X_CONF_FILTER_MIN_CONF`
+- `PIPE_END_YOLO_FAR_X_CONF_FILTER_EXTRA_CONF`
+
+### 27.4 Backend Export And Matcher Integration
+
+The backend pipeline now looks for saved SAM boundaries that match the processed camera image. When found, it exports:
+
+- `extra_meta.sam_boundary`
+- `extra_meta.sam_boundary_bounds_y`
+- `extra_meta.pipe_end_yolo.recovery_bounds_y`
+
+Those vertical bounds are also passed into `run_pipe_end_inference(...)` so edge-gap recovery can search for missing first/last pipe ends near the SAM top and bottom.
+
+Relevant implementation:
+
+- `src/tenaris_tube_pipeline/camera.py`
+- `_latest_sam_boundary_meta(...)`
+- `_apply_pipe_end_yolo_detection(..., recovery_bounds_y=...)`
+
+The matcher now has a SAM-normalized strategy:
+
+- if both camera datasets include SAM/bundle Y-bounds, pipe-end positions are normalized onto the physical bundle axis;
+- normalized position is `(sam_bottom - box_y_center) / (sam_bottom - sam_top)`;
+- `0.0` means bottom of bundle and `1.0` means top of bundle;
+- both cameras then assign comparable vertical slots even if their pixel heights differ.
+
+Strategy name:
+
+```text
+sam_bundle_normalized_vertical_slots
+```
+
+Relevant implementation:
+
+- `src/cam151_ref_detection/tube_matcher_proc.py`
+- `_dataset_bundle_y_bounds(...)`
+- `_assign_bundle_normalized_slots(...)`
+- `_select_match_rows(...)`
+
+If SAM bounds are missing from either camera dataset, the matcher falls back to the previous local vertical-slot strategy.
+
+### 27.5 Validation Run During This Session
+
+Compiled successfully:
+
+```powershell
+python -m py_compile apps/pipe_end_annotator/annotate_app.py src/pipe_end_yolo/inference.py src/tenaris_tube_pipeline/camera.py src/cam151_ref_detection/tube_matcher_proc.py
+```
+
+Behavior checks performed:
+
+- annotation-derived spacing stats loaded for both cam151 and cam152;
+- isolated pipe-end outlier filtering removed synthetic detached boxes;
+- SAM boundary metadata was recovered from a real saved boundary JSON;
+- matcher activated `sam_bundle_normalized_vertical_slots` when both datasets included SAM Y-bounds;
+- large-box Sobel-Y split skipped a box whose lower neighbor was far left;
+- large-box Sobel-Y split a box whose lower neighbor was close in X;
+- far-X confidence filtering removed a low-confidence lateral outlier;
+- far-X confidence filtering kept a high-confidence lateral outlier with `kept_far_x_high_conf`.
+
+### 27.6 Current Open Decisions
+
+Recommended next work:
+
+- run `Pipe-end SAM` on representative images from both cameras so future backend exports include SAM bounds;
+- process a fresh cam151/cam152 pair and confirm the matcher reports `sam_bundle_normalized_vertical_slots`;
+- inspect cases where first/last pipe ends are still missed and tune edge-gap recovery ratios;
+- keep SAM base for now unless a curated mask dataset is created;
+- fine-tune SAM only after collecting corrected bundle masks, not just box labels;
+- avoid committing generated boundary JSON, training runs, model weights, and bulk annotation artifacts unless intentionally using Git LFS or a release artifact.
+

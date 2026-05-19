@@ -113,6 +113,9 @@ class TrainingState:
 
 
 TRAINING_STATE = TrainingState()
+SAM_BOUNDARY_LOCK = threading.Lock()
+SAM_BOUNDARY_MODELS: dict[str, object] = {}
+SPACING_STATS_CACHE: dict[tuple[str, str, int, int], dict | None] = {}
 
 
 def active_model_path() -> Path:
@@ -121,14 +124,6 @@ def active_model_path() -> Path:
 
 def cam152_pipe_end_model_path() -> Path:
     return REPO_ROOT / "models" / "pipe_end_cam152_active" / "best.pt"
-
-
-def tube_bundle_model_path() -> Path:
-    return REPO_ROOT / "models" / "tube_bundle_active" / "best.pt"
-
-
-def tube_bundle_edge_model_path() -> Path:
-    return REPO_ROOT / "models" / "tube_bundle_edge_active" / "best.pt"
 
 
 def repo_display_path(path: Path) -> str:
@@ -170,41 +165,11 @@ def task_config(paths: AppPaths, task_key: str | None = None) -> AnnotationTask:
             single_image_conf=_single_image_predict_conf(),
             allow_negative_labels=True,
         )
-    if key == "tube_bundle":
-        bundle_root = REPO_ROOT / "tube_bundle_detection"
-        return AnnotationTask(
-            key="tube_bundle",
-            label="Tube bundle: one box per image",
-            class_name="tube_bundle",
-            labels_root=bundle_root / "annotation_pool" / "labels",
-            predictions_root=bundle_root / "predictions" / "current" / "labels",
-            model_path=tube_bundle_model_path(),
-            work_root=bundle_root / "active_training",
-            project_root=bundle_root / "runs" / "tube_bundle_active",
-            max_boxes=1,
-            single_image_conf=0.20,
-            include_unlabeled_negatives=True,
-        )
-    if key == "tube_bundle_edge":
-        edge_root = REPO_ROOT / "tube_bundle_edge_detection"
-        return AnnotationTask(
-            key="tube_bundle_edge",
-            label="Tube bundle edge: pipe-end strip",
-            class_name="tube_bundle_edge",
-            labels_root=edge_root / "annotation_pool" / "labels",
-            predictions_root=edge_root / "predictions" / "current" / "labels",
-            model_path=tube_bundle_edge_model_path(),
-            work_root=edge_root / "active_training",
-            project_root=edge_root / "runs" / "tube_bundle_edge_active",
-            max_boxes=1,
-            single_image_conf=0.20,
-            allow_negative_labels=True,
-        )
     raise ValueError(f"Unknown annotation task: {task_key!r}")
 
 
 def list_tasks(paths: AppPaths) -> list[AnnotationTask]:
-    return [task_config(paths, key) for key in ("pipe_end", "pipe_end_cam152", "tube_bundle", "tube_bundle_edge")]
+    return [task_config(paths, key) for key in ("pipe_end", "pipe_end_cam152")]
 
 
 def normalize_rel(path: str) -> Path:
@@ -313,6 +278,123 @@ def boxes_to_yolo(boxes: list[dict], image_width: int, image_height: int) -> str
         hn = h / float(image_height)
         lines.append(f"{CLASS_ID} {xc:.6f} {yc:.6f} {wn:.6f} {hn:.6f}")
     return "\n".join(lines) + ("\n" if lines else "")
+
+
+def _box_to_xyxy(box: dict, image_width: int, image_height: int) -> tuple[float, float, float, float]:
+    x1 = max(0.0, min(float(image_width), float(box.get("x", 0.0))))
+    y1 = max(0.0, min(float(image_height), float(box.get("y", 0.0))))
+    x2 = max(0.0, min(float(image_width), x1 + float(box.get("w", 0.0))))
+    y2 = max(0.0, min(float(image_height), y1 + float(box.get("h", 0.0))))
+    return x1, y1, x2, y2
+
+
+def _largest_yolo_box_xyxy(label_path: Path, image_width: int, image_height: int) -> tuple[float, float, float, float] | None:
+    boxes = yolo_to_boxes(label_path, image_width, image_height)
+    if not boxes:
+        return None
+    best = max(boxes, key=lambda box: float(box.get("w", 0.0)) * float(box.get("h", 0.0)))
+    return _box_to_xyxy(best, image_width, image_height)
+
+
+def _median_float(values: list[float]) -> float | None:
+    clean = sorted(float(value) for value in values if float(value) > 1e-6)
+    if not clean:
+        return None
+    mid = len(clean) // 2
+    if len(clean) % 2:
+        return float(clean[mid])
+    return float(0.5 * (clean[mid - 1] + clean[mid]))
+
+
+def _mean_variance(values: list[float]) -> tuple[float, float]:
+    if not values:
+        return 0.0, 0.0
+    mean = sum(float(value) for value in values) / float(len(values))
+    variance = sum((float(value) - mean) ** 2 for value in values) / float(len(values))
+    return float(mean), float(variance)
+
+
+def _image_path_for_label_stem(paths: AppPaths, rel_stem: Path) -> Path | None:
+    for suffix in IMAGE_SUFFIXES:
+        candidate = (paths.images_root / rel_stem).with_suffix(suffix)
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _task_pipe_end_spacing_stats(paths: AppPaths, task: AnnotationTask) -> dict | None:
+    if not task.use_pipe_end_inference:
+        return None
+    label_files = [
+        path
+        for path in task.labels_root.rglob("*.txt")
+        if path.is_file()
+        and (
+            not task.camera_filter
+            or (
+                (rel := path.relative_to(task.labels_root).with_suffix("")).parts
+                and rel.parts[0] == task.camera_filter
+            )
+        )
+    ]
+    if not label_files:
+        return None
+    latest_mtime = max(path.stat().st_mtime_ns for path in label_files)
+    cache_key = (task.key, task.camera_filter or "", len(label_files), int(latest_mtime))
+    if cache_key in SPACING_STATS_CACHE:
+        return SPACING_STATS_CACHE[cache_key]
+
+    spacings: list[float] = []
+    sample_count = 0
+    for label_path in label_files:
+        rel_stem = label_path.relative_to(task.labels_root).with_suffix("")
+        image_path = _image_path_for_label_stem(paths, rel_stem)
+        if image_path is None:
+            continue
+        try:
+            width, height = image_size(image_path)
+            boxes = yolo_to_boxes(label_path, width, height)
+        except Exception:
+            continue
+        if len(boxes) < 2:
+            continue
+        ys = sorted(float(box.get("y", 0.0)) + 0.5 * float(box.get("h", 0.0)) for box in boxes)
+        gaps = [ys[idx + 1] - ys[idx] for idx in range(len(ys) - 1) if ys[idx + 1] > ys[idx]]
+        if gaps:
+            sample_count += 1
+            spacings.extend(gaps)
+
+    raw_median = _median_float(spacings)
+    if raw_median is None or len(spacings) < 10:
+        SPACING_STATS_CACHE[cache_key] = None
+        return None
+
+    central = [gap for gap in spacings if 0.35 * raw_median <= gap <= 2.50 * raw_median]
+    median_gap = _median_float(central) or raw_median
+    mean_gap, variance_gap = _mean_variance(central)
+    deviations = [abs(gap - median_gap) for gap in central]
+    mad = _median_float(deviations) or 0.0
+    robust_sigma = 1.4826 * float(mad)
+    std_gap = float(variance_gap) ** 0.5
+    allowed_gap = max(1.65 * float(median_gap), float(median_gap) + 4.0 * robust_sigma)
+    if std_gap > 0:
+        allowed_gap = max(allowed_gap, float(mean_gap) + 2.0 * std_gap)
+    allowed_gap = min(allowed_gap, 3.0 * float(median_gap))
+
+    stats = {
+        "source": "annotation_spacing",
+        "sample_image_count": int(sample_count),
+        "spacing_count": int(len(central)),
+        "raw_spacing_count": int(len(spacings)),
+        "median_gap_px": float(median_gap),
+        "mean_gap_px": float(mean_gap),
+        "variance_gap_px": float(variance_gap),
+        "std_gap_px": float(std_gap),
+        "mad_gap_px": float(mad),
+        "allowed_gap_px": float(allowed_gap),
+    }
+    SPACING_STATS_CACHE[cache_key] = stats
+    return stats
 
 
 def image_size(path: Path) -> tuple[int, int]:
@@ -731,6 +813,44 @@ def _run_generic_yolo_prediction(
     }
 
 
+def _sam_payload_y_bounds(payload: dict) -> tuple[float, float] | None:
+    ys: list[float] = []
+    for key in ("mask_polygon", "boundary", "left_boundary", "right_boundary"):
+        points = payload.get(key)
+        if not isinstance(points, list):
+            continue
+        for point in points:
+            if isinstance(point, list) and len(point) >= 2:
+                try:
+                    ys.append(float(point[1]))
+                except (TypeError, ValueError):
+                    pass
+    if len(ys) < 2:
+        return None
+    return min(ys), max(ys)
+
+
+def _latest_sam_recovery_bounds_y(rel: Path) -> tuple[float, float] | None:
+    boundaries_root = REPO_ROOT / "sam_boundary_detection" / "sam2p1_boundary_app" / "boundaries"
+    candidates: list[tuple[float, float, float]] = []
+    for source in ("sam_full_image", "pipe_end_span"):
+        path = (boundaries_root / source / rel).with_suffix(".json")
+        if not path.exists():
+            continue
+        try:
+            bounds = _sam_payload_y_bounds(json.loads(path.read_text(encoding="utf-8")))
+        except Exception:
+            bounds = None
+        if bounds is None:
+            continue
+        top, bottom = bounds
+        candidates.append((bottom - top, top, bottom))
+    if not candidates:
+        return None
+    _, top, bottom = max(candidates, key=lambda item: item[0])
+    return float(top), float(bottom)
+
+
 def run_single_image_prediction(paths: AppPaths, rel: Path, task_key: str | None = None) -> dict:
     from src.pipe_end_yolo import resolve_model_path, run_pipe_end_inference
 
@@ -755,6 +875,8 @@ def run_single_image_prediction(paths: AppPaths, rel: Path, task_key: str | None
 
     model_path = _fallback_model_for_task(task)
     output_dir = task.work_root / "single_image_runs" / rel.parent / image_path.stem
+    recovery_bounds_y = _latest_sam_recovery_bounds_y(rel)
+    spacing_stats = _task_pipe_end_spacing_stats(paths, task)
     result = run_pipe_end_inference(
         image_path,
         output_dir,
@@ -762,6 +884,8 @@ def run_single_image_prediction(paths: AppPaths, rel: Path, task_key: str | None
         imgsz=paths.train_imgsz,
         conf=task.single_image_conf,
         device=_single_image_predict_device(),
+        recovery_bounds_y=recovery_bounds_y,
+        spacing_stats=spacing_stats,
     )
 
     prediction_label_path = (task.predictions_root / rel).with_suffix(".txt")
@@ -793,7 +917,355 @@ def run_single_image_prediction(paths: AppPaths, rel: Path, task_key: str | None
         "model_path": repo_display_path(model_path),
         "prediction_path": repo_display_path(prediction_label_path),
         "overlay_path": repo_display_path(result.overlay_path),
+        "recovery_bounds_y": None if recovery_bounds_y is None else [float(recovery_bounds_y[0]), float(recovery_bounds_y[1])],
+        "spacing_stats": spacing_stats,
+        "postprocess": result.postprocess or {},
     }
+
+
+def _sam_boundary_model(model_name: str) -> object:
+    with SAM_BOUNDARY_LOCK:
+        model = SAM_BOUNDARY_MODELS.get(model_name)
+        if model is not None:
+            return model
+        try:
+            from ultralytics import SAM  # type: ignore
+        except Exception as exc:
+            raise RuntimeError("Python package 'ultralytics' was not found. Install ultralytics first.") from exc
+        model = SAM(model_name)
+        SAM_BOUNDARY_MODELS[model_name] = model
+        return model
+
+
+def _largest_component(mask: object) -> object:
+    import cv2  # type: ignore
+    import numpy as np
+
+    mask_u8 = (np.asarray(mask) > 0).astype(np.uint8)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(mask_u8, connectivity=8)
+    if count <= 1:
+        return mask_u8
+    largest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+    return (labels == largest).astype(np.uint8)
+
+
+def _clean_sam_mask(mask: object, close_kernel: int = 7) -> object:
+    import cv2  # type: ignore
+    import numpy as np
+
+    mask_u8 = np.asarray(_largest_component(mask), dtype=np.uint8)
+    if close_kernel > 1:
+        k = int(close_kernel)
+        if k % 2 == 0:
+            k += 1
+        kernel = np.ones((k, k), dtype=np.uint8)
+        mask_u8 = cv2.morphologyEx(mask_u8, cv2.MORPH_CLOSE, kernel)
+        mask_u8 = np.asarray(_largest_component(mask_u8), dtype=np.uint8)
+    return mask_u8
+
+
+def _crop_mask_to_box(mask: object, box: dict | None) -> object:
+    import numpy as np
+
+    mask_u8 = np.asarray(mask, dtype=np.uint8)
+    if not isinstance(box, dict):
+        return mask_u8
+    height, width = mask_u8.shape[:2]
+    try:
+        x1 = int(max(0, min(width, round(float(box.get("x", 0.0))))))
+        y1 = int(max(0, min(height, round(float(box.get("y", 0.0))))))
+        x2 = int(max(0, min(width, round(float(box.get("x", 0.0)) + float(box.get("w", 0.0))))))
+        y2 = int(max(0, min(height, round(float(box.get("y", 0.0)) + float(box.get("h", 0.0))))))
+    except (TypeError, ValueError):
+        return mask_u8
+    if x2 <= x1 + 2 or y2 <= y1 + 2:
+        return mask_u8
+    cropped = np.zeros_like(mask_u8)
+    cropped[y1:y2, x1:x2] = mask_u8[y1:y2, x1:x2]
+    return cropped
+
+
+def _mask_polygon(mask: object, epsilon_ratio: float = 0.003) -> list[list[float]]:
+    import cv2  # type: ignore
+    import numpy as np
+
+    mask_u8 = (np.asarray(mask) > 0).astype(np.uint8)
+    contours, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return []
+    contour = max(contours, key=cv2.contourArea)
+    perimeter = cv2.arcLength(contour, True)
+    epsilon = max(1.0, epsilon_ratio * perimeter)
+    approx = cv2.approxPolyDP(contour, epsilon, True).reshape(-1, 2)
+    return [[float(x), float(y)] for x, y in approx.tolist()]
+
+
+def _smooth_values(values: list[float], window: int) -> list[float]:
+    import numpy as np
+
+    if not values:
+        return []
+    k = max(1, int(window))
+    if k <= 1:
+        return [float(v) for v in values]
+    if k % 2 == 0:
+        k += 1
+    pad = k // 2
+    arr = np.asarray(values, dtype=np.float32)
+    padded = np.pad(arr, (pad, pad), mode="edge")
+    return [float(np.median(padded[idx : idx + k])) for idx in range(arr.size)]
+
+
+def _mask_boundary(mask: object, side: str, row_step: int = 5, smooth_window: int = 9, min_width_px: int = 12) -> list[list[float]]:
+    import numpy as np
+
+    mask_arr = np.asarray(mask)
+    height = int(mask_arr.shape[0])
+    ys: list[int] = []
+    xs: list[float] = []
+    for y in range(0, height, max(1, int(row_step))):
+        cols = np.flatnonzero(mask_arr[y] > 0)
+        if cols.size < max(1, int(min_width_px)):
+            continue
+        ys.append(y)
+        xs.append(float(cols[0] if side == "left" else cols[-1]))
+    xs_smooth = _smooth_values(xs, smooth_window)
+    return [[float(x), float(y)] for x, y in zip(xs_smooth, ys)]
+
+
+def _boundary_roughness(points: list[list[float]]) -> float:
+    import numpy as np
+
+    if len(points) < 3:
+        return 0.0
+    xs = np.asarray([point[0] for point in points], dtype=np.float32)
+    return float(np.std(np.diff(xs)))
+
+
+def _sam_full_image_meta() -> dict:
+    return {
+        "prompt_source": "sam_full_image",
+        "prompt_label_path": None,
+        "prompt_model_path": None,
+        "prompt_conf": None,
+        "prompt_box": None,
+    }
+
+
+def _box_payload(box: dict) -> dict:
+    return {
+        "x": float(box.get("x", 0.0)),
+        "y": float(box.get("y", 0.0)),
+        "w": float(box.get("w", 0.0)),
+        "h": float(box.get("h", 0.0)),
+        "conf": box.get("conf"),
+    }
+
+
+def _box_center_y(box: dict) -> float:
+    return float(box.get("y", 0.0)) + 0.5 * float(box.get("h", 0.0))
+
+
+def _select_pipe_end_bundle_cluster(boxes: list[dict], spacing_stats: dict | None = None) -> list[dict]:
+    if len(boxes) <= 2:
+        return boxes
+    ordered = sorted(boxes, key=_box_center_y)
+    median_h = _median_float([float(box.get("h", 0.0)) for box in ordered]) or 16.0
+    gaps = [
+        _box_center_y(ordered[idx + 1]) - _box_center_y(ordered[idx])
+        for idx in range(len(ordered) - 1)
+        if _box_center_y(ordered[idx + 1]) > _box_center_y(ordered[idx])
+    ]
+    if spacing_stats:
+        pitch = float(spacing_stats.get("median_gap_px") or 0.0)
+        break_gap = float(spacing_stats.get("allowed_gap_px") or 0.0)
+    else:
+        pitch = 0.0
+        break_gap = 0.0
+    if pitch <= 1e-6 or break_gap <= 1e-6:
+        local_gaps = [gap for gap in gaps if gap <= max(55.0, 4.0 * float(median_h))]
+        pitch = _median_float(local_gaps) or _median_float(gaps) or (1.4 * float(median_h))
+        break_gap = max(55.0, 2.8 * float(pitch), 3.5 * float(median_h))
+
+    clusters: list[list[dict]] = [[ordered[0]]]
+    previous_y = _box_center_y(ordered[0])
+    for box in ordered[1:]:
+        y = _box_center_y(box)
+        if y - previous_y > break_gap:
+            clusters.append([box])
+        else:
+            clusters[-1].append(box)
+        previous_y = y
+
+    kept_clusters = [cluster for cluster in clusters if len(cluster) >= 3]
+    if not kept_clusters:
+        kept_clusters = [max(clusters, key=len)]
+    return [box for cluster in kept_clusters for box in cluster]
+
+
+def _pipe_end_span_prompt(paths: AppPaths, rel: Path, width: int, height: int) -> tuple[tuple[float, float, float, float], dict]:
+    camera = rel.parts[0] if rel.parts else ""
+    task_key = "pipe_end_cam152" if camera == "cam152" else "pipe_end"
+    task = task_config(paths, task_key)
+    prediction = run_single_image_prediction(paths, rel, task_key)
+    boxes = [
+        box
+        for box in prediction.get("boxes", [])
+        if float(box.get("w", 0.0)) > 1.0 and float(box.get("h", 0.0)) > 1.0
+    ]
+    if not boxes:
+        raise ValueError(f"{task.class_name} detector found 0 boxes for {rel.as_posix()}.")
+
+    spacing_stats = _task_pipe_end_spacing_stats(paths, task)
+    prompt_boxes = _select_pipe_end_bundle_cluster(boxes, spacing_stats)
+    top = min(prompt_boxes, key=_box_center_y)
+    bottom = max(prompt_boxes, key=_box_center_y)
+    heights = sorted(float(box.get("h", 0.0)) for box in prompt_boxes)
+    widths = sorted(float(box.get("w", 0.0)) for box in prompt_boxes)
+    median_h = heights[len(heights) // 2] if heights else 0.0
+    median_w = widths[len(widths) // 2] if widths else 0.0
+    y_margin = max(10.0, 0.6 * median_h)
+    top_y_margin = max(24.0, 2.0 * median_h)
+    x_margin = max(12.0, 0.75 * median_w)
+    strip_margin = max(48.0, 6.0 * median_w, 0.31 * float(width))
+    left_edge = min(float(box.get("x", 0.0)) for box in prompt_boxes)
+    right_edge = max(float(box.get("x", 0.0)) + float(box.get("w", 0.0)) for box in prompt_boxes)
+    mask_crop_x1 = max(0.0, left_edge - strip_margin)
+    x1 = 0.0
+    y1 = max(1.0, float(top.get("y", 0.0)) - top_y_margin)
+    x2 = min(float(width), right_edge + x_margin)
+    y2 = min(float(height), float(bottom.get("y", 0.0)) + float(bottom.get("h", 0.0)) + y_margin)
+    if x2 <= x1 + 2.0 or y2 <= y1 + 2.0:
+        raise ValueError(f"pipe_end span prompt was too small for {rel.as_posix()}.")
+
+    top_payload = _box_payload(top)
+    bottom_payload = _box_payload(bottom)
+    conf_values = [
+        float(box.get("conf"))
+        for box in (top, bottom)
+        if box.get("conf") is not None
+    ]
+    prompt_conf = min(conf_values) if conf_values else None
+    return (x1, y1, x2, y2), {
+        "prompt_source": "pipe_end_span",
+        "prompt_label_path": repo_display_path((task.predictions_root / rel).with_suffix(".txt")),
+        "prompt_model_path": prediction.get("model_path"),
+        "prompt_conf": prompt_conf,
+        "prompt_pipe_end_count": len(prompt_boxes),
+        "prompt_pipe_end_raw_count": len(boxes),
+        "prompt_spacing_stats": spacing_stats,
+        "prompt_pipe_end_boxes": [top_payload, bottom_payload],
+        "prompt_top_bound_source": "highest_pipe_end_expanded",
+        "prompt_bottom_bound_source": "lowest_pipe_end",
+        "prompt_x_bound_source": "wide_context",
+        "mask_crop_box": {
+            "x": mask_crop_x1,
+            "y": y1,
+            "w": x2 - mask_crop_x1,
+            "h": y2 - y1,
+            "source": "pipe_end_strip_cleanup",
+        },
+    }
+
+
+def run_sam_boundary(
+    paths: AppPaths,
+    rel: Path,
+    side: str = "right",
+    sam_model: str = "sam2.1_s.pt",
+    prompt_mode: str = "pipe_end_span",
+) -> dict:
+    import cv2  # type: ignore
+    import numpy as np
+
+    image_path = paths.images_root / rel
+    if not image_path.exists() or image_path.suffix.lower() not in IMAGE_SUFFIXES:
+        raise FileNotFoundError(f"image not found: {rel.as_posix()}")
+
+    width, height = image_size(image_path)
+    prompt_mode = (prompt_mode or "pipe_end_span").strip().lower()
+    prompt_box: tuple[float, float, float, float] | None = None
+    if prompt_mode == "full_image":
+        prompt_meta = _sam_full_image_meta()
+    elif prompt_mode in {"pipe_end_span", "pipe_ends", "pipe_end"}:
+        prompt_box, prompt_meta = _pipe_end_span_prompt(paths, rel, width, height)
+    else:
+        raise ValueError(f"Unknown SAM prompt mode: {prompt_mode!r}")
+
+    model = _sam_boundary_model(sam_model)
+    predict_kwargs: dict[str, object] = {
+        "verbose": False,
+    }
+    if prompt_box is not None:
+        predict_kwargs["bboxes"] = [list(prompt_box)]
+    if paths.train_device:
+        predict_kwargs["device"] = str(paths.train_device)
+    results = model.predict(str(image_path), **predict_kwargs)  # type: ignore[attr-defined]
+    if not results or getattr(results[0], "masks", None) is None:
+        raise RuntimeError("SAM did not return a mask.")
+    data = results[0].masks.data
+    if data is None or len(data) == 0:
+        raise RuntimeError("SAM returned an empty mask.")
+    masks = data.cpu().numpy().astype(np.uint8)
+    if masks.ndim == 2:
+        masks = masks[None, :, :]
+    mask_areas = [int(mask.sum()) for mask in masks]
+    selected_mask_index = int(np.argmax(mask_areas))
+    mask = masks[selected_mask_index]
+    if mask.shape[:2] != (height, width):
+        mask = cv2.resize(mask, (width, height), interpolation=cv2.INTER_NEAREST)
+    mask = np.asarray(_clean_sam_mask(mask), dtype=np.uint8)
+    mask_crop_box = prompt_meta.get("mask_crop_box") if isinstance(prompt_meta, dict) else None
+    if mask_crop_box is not None:
+        cropped_mask = np.asarray(_crop_mask_to_box(mask, mask_crop_box), dtype=np.uint8)
+        if int(cropped_mask.sum()) > 0:
+            mask = np.asarray(_clean_sam_mask(cropped_mask, close_kernel=3), dtype=np.uint8)
+
+    left = _mask_boundary(mask, "left")
+    right = _mask_boundary(mask, "right")
+    if side not in {"left", "right", "auto"}:
+        side = "right"
+    selected_side = side
+    if selected_side == "auto":
+        selected_side = "left" if _boundary_roughness(left) > _boundary_roughness(right) else "right"
+    boundary = left if selected_side == "left" else right
+    polygon = _mask_polygon(mask)
+
+    output_path = (
+        REPO_ROOT
+        / "sam_boundary_detection"
+        / "sam2p1_boundary_app"
+        / "boundaries"
+        / str(prompt_meta.get("prompt_source", "unknown"))
+        / rel
+    ).with_suffix(".json")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "ok": True,
+        "path": rel.as_posix(),
+        "width": width,
+        "height": height,
+        "sam_model": sam_model,
+        **prompt_meta,
+        "prompt_box": (
+            {"x": prompt_box[0], "y": prompt_box[1], "w": prompt_box[2] - prompt_box[0], "h": prompt_box[3] - prompt_box[1]}
+            if prompt_box is not None
+            else None
+        ),
+        "mask_count": int(len(masks)),
+        "selected_mask_index": selected_mask_index,
+        "selected_side": selected_side,
+        "boundary": boundary,
+        "left_boundary": left,
+        "right_boundary": right,
+        "mask_polygon": polygon,
+        "mask_area_px": int(mask.sum()),
+        "left_roughness": _boundary_roughness(left),
+        "right_roughness": _boundary_roughness(right),
+        "boundary_path": repo_display_path(output_path),
+    }
+    output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return payload
 
 
 def _read_roi_toml(path: Path) -> dict:
@@ -1496,8 +1968,6 @@ HTML = r"""<!doctype html>
         <select id="taskSelect">
           <option value="pipe_end">pipe_end | cam151 model</option>
           <option value="pipe_end_cam152">pipe_end | cam152 model</option>
-          <option value="tube_bundle">tube_bundle | one box</option>
-          <option value="tube_bundle_edge">tube_bundle_edge | pipe-end strip</option>
         </select>
         <div class="row">
           <select id="cameraFilter">
@@ -1531,6 +2001,11 @@ HTML = r"""<!doctype html>
           <button id="runImagePredBtn">Run model on this image</button>
           <button id="loadPredBtn">Load AI boxes</button>
         </div>
+        <div class="row">
+          <button id="runPipeEndSamBtn">Pipe-end SAM</button>
+          <button id="runSamBoundaryBtn">Full-image SAM</button>
+        </div>
+        <button id="clearSamBoundaryBtn">Clear SAM</button>
         <div class="row">
           <button id="trainBtn">Train AI</button>
           <button id="generatePredBtn">Generate predictions</button>
@@ -1588,6 +2063,7 @@ HTML = r"""<!doctype html>
       zoom: 1,
       panX: 18,
       panY: 18,
+      samBoundary: null,
       imageNatural: {w: 0, h: 0}
     };
 
@@ -1609,6 +2085,9 @@ HTML = r"""<!doctype html>
       deleteBtn: document.getElementById('deleteBtn'),
       runImagePredBtn: document.getElementById('runImagePredBtn'),
       loadPredBtn: document.getElementById('loadPredBtn'),
+      runPipeEndSamBtn: document.getElementById('runPipeEndSamBtn'),
+      runSamBoundaryBtn: document.getElementById('runSamBoundaryBtn'),
+      clearSamBoundaryBtn: document.getElementById('clearSamBoundaryBtn'),
       trainBtn: document.getElementById('trainBtn'),
       generatePredBtn: document.getElementById('generatePredBtn'),
       badWarpBtn: document.getElementById('badWarpBtn'),
@@ -1751,6 +2230,7 @@ HTML = r"""<!doctype html>
       state.resizing = null;
       state.dirty = false;
       state.negative = false;
+      state.samBoundary = null;
       await loadCurrent();
       renderList();
     }
@@ -1775,6 +2255,7 @@ HTML = r"""<!doctype html>
       state.boxes = labels.boxes || [];
       state.resizing = null;
       state.negative = !!labels.negative;
+      state.samBoundary = null;
       updateNegativeUi();
       setStatus(state.negative ? 'loaded as negative annotation' : `loaded ${state.boxes.length} boxes`);
       draw();
@@ -1807,9 +2288,11 @@ HTML = r"""<!doctype html>
     }
 
     function canvasPoint(evt) {
-      const rect = els.stage.getBoundingClientRect();
-      const x = (evt.clientX - rect.left - state.panX) / Math.max(0.001, state.zoom);
-      const y = (evt.clientY - rect.top - state.panY) / Math.max(0.001, state.zoom);
+      const rect = els.overlay.getBoundingClientRect();
+      const scaleX = state.imageNatural.w / Math.max(1, rect.width);
+      const scaleY = state.imageNatural.h / Math.max(1, rect.height);
+      const x = (evt.clientX - rect.left) * scaleX;
+      const y = (evt.clientY - rect.top) * scaleY;
       return {
         x: Math.max(0, Math.min(state.imageNatural.w, x)),
         y: Math.max(0, Math.min(state.imageNatural.h, y))
@@ -1940,6 +2423,64 @@ HTML = r"""<!doctype html>
       ctx.restore();
     }
 
+    function drawPolyline(points, color, width) {
+      if (!points || points.length < 2) return;
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(points[0][0], points[0][1]);
+      for (const point of points.slice(1)) ctx.lineTo(point[0], point[1]);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawSamBoundary() {
+      const sam = state.samBoundary;
+      if (!sam) return;
+      ctx.save();
+      const guideBoxes = sam.prompt_pipe_end_boxes || [];
+      for (const guide of guideBoxes) {
+        ctx.strokeStyle = 'rgba(115, 192, 255, 0.95)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(guide.x, guide.y, guide.w, guide.h);
+      }
+      const poly = sam.mask_polygon || [];
+      if (poly.length >= 3) {
+        ctx.beginPath();
+        ctx.moveTo(poly[0][0], poly[0][1]);
+        for (const point of poly.slice(1)) ctx.lineTo(point[0], point[1]);
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(50, 213, 131, 0.28)';
+        ctx.strokeStyle = 'rgba(50, 213, 131, 0.85)';
+        ctx.lineWidth = 2;
+        ctx.fill();
+        ctx.stroke();
+      }
+      if (sam.prompt_box) {
+        const box = sam.prompt_box;
+        ctx.setLineDash([10, 7]);
+        ctx.strokeStyle = 'rgba(255, 99, 71, 0.9)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(box.x, box.y, box.w, box.h);
+        ctx.setLineDash([]);
+        const conf = typeof sam.prompt_conf === 'number' ? ` ${(sam.prompt_conf * 100).toFixed(0)}%` : '';
+        const label = sam.prompt_source === 'pipe_end_span' ? `pipe_end span${conf}` : `prompt${conf}`;
+        ctx.font = 'bold 18px Segoe UI';
+        const metrics = ctx.measureText(label);
+        const labelX = Math.max(0, Math.min(box.x, els.overlay.width - metrics.width - 14));
+        const labelY = Math.max(22, box.y - 8);
+        ctx.fillStyle = 'rgba(255, 99, 71, 0.92)';
+        ctx.fillRect(labelX, labelY - 22, metrics.width + 12, 25);
+        ctx.fillStyle = '#fff8f3';
+        ctx.fillText(label, labelX + 6, labelY - 4);
+      }
+      ctx.restore();
+      drawPolyline(sam.boundary || [], '#ff4fd8', 4);
+    }
+
     function draw() {
       ctx.clearRect(0, 0, els.overlay.width, els.overlay.height);
       if (state.negative) {
@@ -1949,8 +2490,9 @@ HTML = r"""<!doctype html>
         ctx.fillStyle = '#d8efff';
         ctx.font = 'bold 28px Segoe UI';
         ctx.fillText('NEGATIVE ANNOTATION', 18, 42);
-        ctx.restore();
+          ctx.restore();
       }
+      drawSamBoundary();
       state.boxes.forEach((box, idx) => drawBox(box, idx, idx === state.selected));
       if (state.drawing) {
         const box = normBox(state.drawing.start, state.drawing.end);
@@ -2105,13 +2647,83 @@ HTML = r"""<!doctype html>
         state.dirty = true;
         draw();
         await refreshImages(item.rel);
-        setStatus(`model found ${state.boxes.length} boxes; review and save`);
+        const post = payload.postprocess || {};
+        const extras = [
+          post.isolated_filter?.removed_count ? `outlier -${post.isolated_filter.removed_count}` : null,
+          post.gap_recovery?.recovered_count ? `gap +${post.gap_recovery.recovered_count}` : null,
+          post.edge_gap_recovery?.recovered_count ? `edge +${post.edge_gap_recovery.recovered_count}` : null,
+          post.large_box_split?.added_count ? `split +${post.large_box_split.added_count}` : null
+        ].filter(Boolean).join(', ');
+        setStatus(`model found ${state.boxes.length} boxes${extras ? ` (${extras})` : ''}; review and save`);
       } catch (err) {
         setStatus(`model prediction failed: ${err.message}`);
       } finally {
         if (button) {
           button.disabled = false;
           button.textContent = 'Run model on this image';
+        }
+      }
+    }
+
+    function modelPostprocessExtras(post) {
+      return [
+        post.isolated_filter?.removed_count ? `outlier -${post.isolated_filter.removed_count}` : null,
+        post.gap_recovery?.recovered_count ? `gap +${post.gap_recovery.recovered_count}` : null,
+        post.edge_gap_recovery?.recovered_count ? `edge +${post.edge_gap_recovery.recovered_count}` : null,
+        post.large_box_split?.added_count ? `split +${post.large_box_split.added_count}` : null
+      ].filter(Boolean).join(', ');
+    }
+
+    async function applyModelPrediction(payload, item) {
+      state.boxes = payload.boxes || [];
+      state.selected = -1;
+      state.resizing = null;
+      state.negative = false;
+      updateNegativeUi();
+      state.dirty = true;
+      draw();
+      await refreshImages(item.rel);
+      return modelPostprocessExtras(payload.postprocess || {});
+    }
+
+    async function runSamBoundaryOnCurrentImage(promptMode='pipe_end_span') {
+      const item = currentItem();
+      if (!item) return;
+      const usePipeEndPrompt = promptMode !== 'full_image';
+      const button = usePipeEndPrompt ? els.runPipeEndSamBtn : els.runSamBoundaryBtn;
+      try {
+        if (button) {
+          button.disabled = true;
+          button.textContent = usePipeEndPrompt ? 'Running pipe-end...' : 'Running SAM...';
+        }
+        setStatus(usePipeEndPrompt ? 'running pipe-end prompt + SAM boundary...' : 'running full-image SAM boundary...');
+        const payload = await api('/api/sam-boundary', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({path: item.rel, side: 'right', prompt_mode: promptMode})
+        });
+        state.samBoundary = payload;
+        draw();
+        const source = payload.prompt_source === 'pipe_end_span' ? `pipe-end span, ${payload.prompt_pipe_end_count || 0} pipe ends`
+          : `full image, ${payload.mask_count || 0} masks`;
+        setStatus(`SAM boundary ready (${source}, ${payload.boundary?.length || 0} points); running guided model...`);
+        if (state.dirty && !confirm('Replace unsaved boxes with SAM-guided model predictions?')) {
+          setStatus(`SAM boundary ready (${source}, ${payload.boundary?.length || 0} points); boxes unchanged`);
+          return;
+        }
+        const prediction = await api('/api/predict-current', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({path: item.rel, task: state.task})
+        });
+        const extras = await applyModelPrediction(prediction, item);
+        setStatus(`SAM-guided model found ${state.boxes.length} boxes${extras ? ` (${extras})` : ''}; review and save`);
+      } catch (err) {
+        setStatus(`SAM boundary failed: ${err.message}`);
+      } finally {
+        if (button) {
+          button.disabled = false;
+          button.textContent = usePipeEndPrompt ? 'Pipe-end SAM' : 'Full-image SAM';
         }
       }
     }
@@ -2281,6 +2893,13 @@ HTML = r"""<!doctype html>
     els.deleteBtn.onclick = deleteSelected;
     els.runImagePredBtn.onclick = runModelOnCurrentImage;
     els.loadPredBtn.onclick = loadPredictions;
+    els.runPipeEndSamBtn.onclick = () => runSamBoundaryOnCurrentImage('pipe_end_span');
+    els.runSamBoundaryBtn.onclick = () => runSamBoundaryOnCurrentImage('full_image');
+    els.clearSamBoundaryBtn.onclick = () => {
+      state.samBoundary = null;
+      draw();
+      setStatus('SAM boundary cleared');
+    };
     els.trainBtn.onclick = trainNow;
     els.generatePredBtn.onclick = generatePredictionsNow;
     els.badWarpBtn.onclick = async () => {
@@ -2324,6 +2943,7 @@ HTML = r"""<!doctype html>
       state.resizing = null;
       state.dirty = false;
       state.negative = false;
+      state.samBoundary = null;
       await refreshImages();
       await loadCurrent();
       renderList();
@@ -2417,6 +3037,7 @@ class AnnotatorHandler(BaseHTTPRequestHandler):
         raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store, max-age=0")
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
         self.wfile.write(raw)
@@ -2425,6 +3046,7 @@ class AnnotatorHandler(BaseHTTPRequestHandler):
         raw = text.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "no-store, max-age=0")
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
         self.wfile.write(raw)
@@ -2502,6 +3124,7 @@ class AnnotatorHandler(BaseHTTPRequestHandler):
                 data = image_path.read_bytes()
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", ctype)
+                self.send_header("Cache-Control", "no-store, max-age=0")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
@@ -2605,6 +3228,13 @@ class AnnotatorHandler(BaseHTTPRequestHandler):
             if parsed.path == "/api/predict-current":
                 rel = normalize_rel(str(payload.get("path", "")))
                 self.send_json(run_single_image_prediction(self.paths, rel, str(payload.get("task", "pipe_end"))))
+                return
+            if parsed.path == "/api/sam-boundary":
+                rel = normalize_rel(str(payload.get("path", "")))
+                side = str(payload.get("side", "right"))
+                sam_model = str(payload.get("sam_model", "sam2.1_s.pt"))
+                prompt_mode = str(payload.get("prompt_mode", "pipe_end_span"))
+                self.send_json(run_sam_boundary(self.paths, rel, side=side, sam_model=sam_model, prompt_mode=prompt_mode))
                 return
             if parsed.path == "/api/roi-save":
                 camera = str(payload.get("camera", "cam151"))

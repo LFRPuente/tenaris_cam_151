@@ -5,9 +5,11 @@ This document is the practical handoff for moving the Tenaris camera MVP and pip
 Current status:
 
 - The Sorting Table MVP is the production-facing app.
-- The MVP uses the classical notebook-style detector by default.
-- YOLO `pipe_end` code is present, but it is experimental and disabled by default.
-- The next integration step is notebook validation before enabling YOLO in production processing.
+- The backend uses YOLO `pipe_end` by default unless `PIPE_END_YOLO_ENABLED=0` is set.
+- The classical notebook-style detector remains available as a fallback.
+- Pipe-end YOLO now includes runtime post-processing for duplicate suppression, gap recovery, SAM-boundary edge recovery, large-box Sobel-Y splitting, lateral outlier confidence filtering, and Sobel-X refinement.
+- SAM is currently used as a prompted boundary segmenter with base `sam2.1_s.pt`; it has not been fine-tuned.
+- The matcher can use SAM-normalized bundle height when both camera datasets export SAM Y-bounds.
 
 ## Repository Scope
 
@@ -111,13 +113,13 @@ Then edit `config.json` locally. Do not commit the real `config.json` if it cont
 
 ## Runtime Defaults
 
-Classical detector is default:
+Classical fallback:
 
 ```powershell
 $env:PIPE_END_YOLO_ENABLED='0'
 ```
 
-Experimental YOLO processing:
+Default YOLO processing:
 
 ```powershell
 $env:PIPE_END_YOLO_ENABLED='1'
@@ -125,7 +127,19 @@ $env:PIPE_END_YOLO_DEVICE='0'
 $env:PIPE_END_YOLO_MODEL='models\pipe_end_active\best.pt'
 ```
 
-Do not enable YOLO for the production MVP until notebook validation is acceptable.
+Current active models:
+
+- cam151 pipe-end model: `models\pipe_end_active\best.pt`
+- cam152 pipe-end model: `models\pipe_end_cam152_active\best.pt`
+- SAM boundary model: base `sam2.1_s.pt`
+
+The annotator app is normally opened at:
+
+```text
+http://127.0.0.1:8765/
+```
+
+The active annotator tasks are `pipe_end | cam151 model` and `pipe_end | cam152 model`. Older `tube_bundle` tasks are intentionally not active in the dropdown.
 
 ## Run The MVP
 
@@ -267,9 +281,9 @@ Copy-Item pipe_end_detection\runs\pipe_end\pipe_end_active\weights\best.pt model
 
 Model weights are ignored by normal Git. Use Git LFS or release artifacts if the model must be shared through GitHub.
 
-## Notebook-First YOLO Integration
+## YOLO / SAM Validation
 
-Before YOLO drives the MVP table:
+YOLO now drives the backend by default, but every post-processing change should still be checked visually:
 
 1. Open `notebooks/tube_detection_step_by_step_cam151.ipynb`.
 2. Run the classical pipeline cells for the selected history image.
@@ -279,7 +293,13 @@ Before YOLO drives the MVP table:
 6. Compare count, duplicates, missed tubes, ordering, and reference-line distances.
 7. Repeat the same validation for `notebooks/tube_detection_step_by_step_cam152.ipynb`.
 
-Only after both cameras pass representative history images should `PIPE_END_YOLO_ENABLED=1` be used for MVP processing tests.
+When saved SAM boundaries exist for both camera exports, the matcher should report:
+
+```text
+sam_bundle_normalized_vertical_slots
+```
+
+If SAM bounds are missing, matching falls back to local vertical-slot matching.
 
 ## Data Transfer Checklist
 
@@ -290,6 +310,8 @@ If moving to a new computer without Git LFS, manually copy:
 - `pipe_end_detection/annotation_pool/image_status.json`
 - `pipe_end_detection/captures/`
 - `models/pipe_end_active/best.pt`
+- `models/pipe_end_cam152_active/best.pt`
+- selected `sam_boundary_detection/sam2p1_boundary_app/boundaries/` JSON files if SAM-normalized matching should work immediately on the new computer
 - any candidate `pipe_end_detection/runs/.../weights/best.pt`
 - local `config.json` with camera credentials, handled outside Git
 
@@ -301,9 +323,10 @@ python -m compileall src apps pipe_end_detection process_tube_pair.py
 
 ## Current Technical Debt
 
-- YOLO failed on at least one recent cam151 warp with zero detections.
-- The current YOLO model is not yet representative enough for production MVP processing.
-- The notebooks need explicit YOLO comparison cells.
+- SAM is not fine-tuned; it is prompted with pipe-end span boxes and used for bundle boundaries.
+- Fine-tune SAM only after collecting corrected bundle masks, not just box labels.
+- Some first/last pipe-end misses may still need edge-gap recovery tuning.
+- The notebooks need explicit YOLO/SAM comparison cells.
 - Image datasets and model weights need a Git LFS or external storage decision.
 - `config.json` credential handling should be formalized with a safe example file.
 
@@ -316,6 +339,6 @@ python -m compileall src apps pipe_end_detection process_tube_pair.py
 5. Train manually after each annotation batch.
 6. Generate predictions only when requested.
 7. Correct predictions and save them as labels.
-8. Validate YOLO in notebooks against classical output.
-9. Add MVP overlay visualization for YOLO boxes.
-10. Enable YOLO in backend processing only after validation passes.
+8. Run `Pipe-end SAM` on representative cam151/cam152 images.
+9. Validate YOLO/SAM in notebooks and confirm matcher strategy on processed pairs.
+10. Tune edge recovery, large-box splitting, and lateral outlier thresholds from real failure cases.

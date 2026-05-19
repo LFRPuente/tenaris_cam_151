@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -12,7 +13,7 @@ from src.cam151_ref_detection.tube_detection_preview import TubeDetectionPreview
 from src.cam151_ref_detection.tube_matcher_proc import export_tube_measurements
 from src.pipe_end_yolo import PipeEndInferenceResult, predictions_to_x_start_list, run_pipe_end_inference
 
-from .config import CameraPipelineConfig, PipelineOutputConfig
+from .config import CameraPipelineConfig, PipelineOutputConfig, repo_root
 from .notebook_style_detection import detect_tubes_like_notebook
 
 
@@ -113,7 +114,96 @@ def _pipe_end_yolo_iou() -> float:
     return _float_env("PIPE_END_YOLO_IOU", 0.50)
 
 
-def _apply_pipe_end_yolo_detection(result: TubeDetectionPreviewResult, output_dir: Path) -> PipeEndInferenceResult:
+def _sam_payload_y_bounds(payload: dict[str, Any]) -> tuple[float, float] | None:
+    ys: list[float] = []
+    for key in ("mask_polygon", "boundary", "left_boundary", "right_boundary"):
+        points = payload.get(key)
+        if not isinstance(points, list):
+            continue
+        for point in points:
+            if isinstance(point, list) and len(point) >= 2:
+                try:
+                    ys.append(float(point[1]))
+                except (TypeError, ValueError):
+                    pass
+    if len(ys) < 2:
+        return None
+    return min(ys), max(ys)
+
+
+def _canonical_boundary_stems(image_path: Path, side: str) -> list[str]:
+    stems = {image_path.stem}
+    side_key = str(side).strip()
+    if side_key in {"151", "152"}:
+        stems.add(image_path.stem.replace(f"cam_{side_key}_", f"cam{side_key}_"))
+        stems.add(image_path.stem.replace(f"cam{side_key}_", f"cam_{side_key}_"))
+    return sorted(stem for stem in stems if stem)
+
+
+def _image_size(path: Path) -> tuple[int, int] | None:
+    image = cv2.imread(str(path))
+    if image is None:
+        return None
+    height, width = image.shape[:2]
+    return int(width), int(height)
+
+
+def _latest_sam_boundary_meta(
+    source_image_path: Path,
+    side: str,
+    *,
+    target_image_path: Path | None = None,
+) -> dict[str, Any] | None:
+    side_key = str(side).strip()
+    camera_dir = f"cam{side_key}"
+    if side_key not in {"151", "152"}:
+        return None
+
+    target_size = _image_size(target_image_path) if target_image_path is not None else None
+    boundaries_root = repo_root() / "sam_boundary_detection" / "sam2p1_boundary_app" / "boundaries"
+    candidates: list[dict[str, Any]] = []
+    for source in ("sam_full_image", "pipe_end_span"):
+        for stem in _canonical_boundary_stems(source_image_path, side_key):
+            path = boundaries_root / source / camera_dir / f"{stem}.json"
+            if not path.exists():
+                continue
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            bounds = _sam_payload_y_bounds(payload)
+            if bounds is None:
+                continue
+            boundary_width = payload.get("width")
+            boundary_height = payload.get("height")
+            if target_size is not None and boundary_width is not None and boundary_height is not None:
+                if abs(int(boundary_width) - target_size[0]) > 2 or abs(int(boundary_height) - target_size[1]) > 2:
+                    continue
+            top, bottom = bounds
+            candidates.append(
+                {
+                    "source": source,
+                    "path": str(path.relative_to(repo_root())),
+                    "bounds_y": [float(top), float(bottom)],
+                    "height_px": float(bottom - top),
+                    "mask_area_px": payload.get("mask_area_px"),
+                    "sam_model": payload.get("sam_model"),
+                    "mtime": path.stat().st_mtime,
+                }
+            )
+    if not candidates:
+        return None
+    selected = max(candidates, key=lambda item: (float(item["height_px"]), float(item["mtime"])))
+    selected.pop("mtime", None)
+    return selected
+
+
+def _apply_pipe_end_yolo_detection(
+    result: TubeDetectionPreviewResult,
+    output_dir: Path,
+    *,
+    recovery_bounds_y: tuple[float, float] | None = None,
+) -> PipeEndInferenceResult:
     yolo_output_dir = output_dir / "pipe_end_yolo"
     yolo_result = run_pipe_end_inference(
         result.homography.warp_path,
@@ -121,6 +211,7 @@ def _apply_pipe_end_yolo_detection(result: TubeDetectionPreviewResult, output_di
         conf=_pipe_end_yolo_conf(result),
         iou=_pipe_end_yolo_iou(),
         device=_pipe_end_yolo_device(),
+        recovery_bounds_y=recovery_bounds_y,
     )
     x_start_list = predictions_to_x_start_list(yolo_result.predictions)
     if not x_start_list:
@@ -209,10 +300,21 @@ def process_camera(config: CameraPipelineConfig, outputs: PipelineOutputConfig) 
         roi_payload=roi_payload,
         output_dir=output_dir,
     )
+    sam_boundary = _latest_sam_boundary_meta(
+        config.image_path,
+        config.side,
+        target_image_path=result.homography.warp_path,
+    )
+    recovery_bounds_y = None
+    if sam_boundary is not None:
+        bounds_y = sam_boundary.get("bounds_y")
+        if isinstance(bounds_y, list) and len(bounds_y) >= 2:
+            recovery_bounds_y = (float(bounds_y[0]), float(bounds_y[1]))
+
     yolo_result: PipeEndInferenceResult | None = None
     detection_source = "notebook_style_sobel_x_roi"
     if _pipe_end_yolo_enabled():
-        yolo_result = _apply_pipe_end_yolo_detection(result, output_dir)
+        yolo_result = _apply_pipe_end_yolo_detection(result, output_dir, recovery_bounds_y=recovery_bounds_y)
         detection_source = "yolo_pipe_end"
 
     tube_measurements = build_tube_measurements(result)
@@ -229,6 +331,9 @@ def process_camera(config: CameraPipelineConfig, outputs: PipelineOutputConfig) 
         "detection_source": detection_source,
         "backend_pipeline": "tenaris_tube_pipeline",
     }
+    if sam_boundary is not None:
+        extra_meta["sam_boundary"] = sam_boundary
+        extra_meta["sam_boundary_bounds_y"] = sam_boundary["bounds_y"]
     if yolo_result is not None:
         extra_meta["pipe_end_yolo"] = {
             "enabled": True,
@@ -242,6 +347,12 @@ def process_camera(config: CameraPipelineConfig, outputs: PipelineOutputConfig) 
             "conf": float(yolo_result.conf),
             "iou": float(yolo_result.iou),
             "device": yolo_result.device,
+            "recovery_bounds_y": (
+                None
+                if yolo_result.recovery_bounds_y is None
+                else [float(yolo_result.recovery_bounds_y[0]), float(yolo_result.recovery_bounds_y[1])]
+            ),
+            "spacing_stats": yolo_result.spacing_stats,
         }
 
     measurement_export_path = export_tube_measurements(
