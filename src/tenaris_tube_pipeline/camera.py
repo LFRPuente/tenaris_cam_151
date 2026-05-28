@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import shutil
 from typing import Any
 
 import cv2
@@ -12,6 +13,7 @@ from src.cam151_ref_detection.roi_store import load_rois
 from src.cam151_ref_detection.tube_detection_preview import TubeDetectionPreviewResult
 from src.cam151_ref_detection.tube_matcher_proc import export_tube_measurements
 from src.pipe_end_yolo import PipeEndInferenceResult, predictions_to_x_start_list, run_pipe_end_inference
+from src.pipe_end_yolo.annotation_context import model_path_for_side, spacing_stats_for_side
 
 from .config import CameraPipelineConfig, PipelineOutputConfig, repo_root
 from .notebook_style_detection import detect_tubes_like_notebook
@@ -103,11 +105,12 @@ def _float_env(name: str, default: float) -> float:
 
 def _pipe_end_yolo_conf(result: TubeDetectionPreviewResult) -> float:
     camera_key = "CAM152" if result.processing_mode == "cam152" else "CAM151"
-    default = 0.05 if camera_key == "CAM152" else 0.10
     camera_specific = f"PIPE_END_YOLO_CONF_{camera_key}"
     if str(os.environ.get(camera_specific, "")).strip():
-        return _float_env(camera_specific, default)
-    return _float_env("PIPE_END_YOLO_CONF", default)
+        return _float_env(camera_specific, 0.20)
+    if str(os.environ.get("PIPE_END_YOLO_CONF", "")).strip():
+        return _float_env("PIPE_END_YOLO_CONF", 0.20)
+    return _float_env("PIPE_END_ANNOTATOR_PREDICT_CONF", 0.20)
 
 
 def _pipe_end_yolo_iou() -> float:
@@ -198,20 +201,121 @@ def _latest_sam_boundary_meta(
     return selected
 
 
+def _sam_boundary_autogen_enabled() -> bool:
+    raw = str(os.environ.get("SAM_BOUNDARY_AUTOGEN_ENABLED", "1")).strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def _sam_boundary_model_name() -> str:
+    return str(os.environ.get("SAM_BOUNDARY_MODEL", "sam2.1_s.pt")).strip() or "sam2.1_s.pt"
+
+
+def _sam_boundary_device() -> str:
+    raw = str(os.environ.get("SAM_BOUNDARY_DEVICE", "")).strip()
+    return raw or _pipe_end_yolo_device() or "0"
+
+
+def _ensure_sam_boundary_from_warp(
+    source_image_path: Path,
+    side: str,
+    warp_image_path: Path,
+) -> dict[str, Any] | None:
+    if not _sam_boundary_autogen_enabled():
+        return None
+    side_key = str(side).strip()
+    if side_key not in {"151", "152"}:
+        return None
+    if not warp_image_path.exists():
+        return None
+
+    try:
+        from apps.pipe_end_annotator.annotate_app import AppPaths, run_sam_boundary
+    except Exception as exc:
+        print(f"[sam_boundary] annotator flow unavailable: {exc}")
+        return None
+
+    root = repo_root() / "pipe_end_detection"
+    images_root = repo_root() / "sam_boundary_detection" / "sam2p1_boundary_app" / "mvp_warp_images"
+    rel = Path(f"cam{side_key}") / f"{source_image_path.stem}{warp_image_path.suffix.lower() or '.jpg'}"
+    image_path = images_root / rel
+    image_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if (not image_path.exists()) or image_path.stat().st_mtime < warp_image_path.stat().st_mtime:
+            shutil.copy2(warp_image_path, image_path)
+    except Exception as exc:
+        print(f"[sam_boundary] could not stage warp image: {exc}")
+        return None
+
+    paths = AppPaths(
+        root=root,
+        images_root=images_root,
+        labels_root=root / "annotation_pool" / "labels",
+        predictions_root=root / "predictions" / "sam_boundary" / "labels",
+        status_path=root / "annotation_pool" / "image_status.json",
+        auto_train=False,
+        min_train_images=4,
+        train_epochs=40,
+        train_imgsz=1280,
+        train_batch=1,
+        base_model="yolo11n.pt",
+        train_device=_sam_boundary_device(),
+        roi_toml_151=None,
+        roi_toml_152=None,
+        raw_image_151=None,
+        raw_image_152=None,
+    )
+    try:
+        payload = run_sam_boundary(
+            paths,
+            rel,
+            side="right",
+            sam_model=_sam_boundary_model_name(),
+            prompt_mode="pipe_end_span",
+        )
+    except Exception as exc:
+        print(f"[sam_boundary] generation failed for {source_image_path.name}: {exc}")
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _sam_boundary_meta_from_payload(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    bounds = _sam_payload_y_bounds(payload)
+    if bounds is None:
+        return None
+    top, bottom = bounds
+    return {
+        "source": str(payload.get("prompt_source") or "pipe_end_span"),
+        "path": str(payload.get("boundary_path") or ""),
+        "bounds_y": [float(top), float(bottom)],
+        "height_px": float(bottom - top),
+        "mask_area_px": payload.get("mask_area_px"),
+        "sam_model": payload.get("sam_model"),
+        "prompt_pipe_end_count": payload.get("prompt_pipe_end_count"),
+        "prompt_pipe_end_raw_count": payload.get("prompt_pipe_end_raw_count"),
+        "prompt_box": payload.get("prompt_box"),
+    }
+
+
 def _apply_pipe_end_yolo_detection(
     result: TubeDetectionPreviewResult,
     output_dir: Path,
     *,
+    side: str,
     recovery_bounds_y: tuple[float, float] | None = None,
+    spacing_stats: dict[str, Any] | None = None,
 ) -> PipeEndInferenceResult:
     yolo_output_dir = output_dir / "pipe_end_yolo"
     yolo_result = run_pipe_end_inference(
         result.homography.warp_path,
         yolo_output_dir,
+        model_path=model_path_for_side(side),
         conf=_pipe_end_yolo_conf(result),
         iou=_pipe_end_yolo_iou(),
         device=_pipe_end_yolo_device(),
         recovery_bounds_y=recovery_bounds_y,
+        spacing_stats=spacing_stats,
     )
     x_start_list = predictions_to_x_start_list(yolo_result.predictions)
     if not x_start_list:
@@ -300,21 +404,31 @@ def process_camera(config: CameraPipelineConfig, outputs: PipelineOutputConfig) 
         roi_payload=roi_payload,
         output_dir=output_dir,
     )
-    sam_boundary = _latest_sam_boundary_meta(
-        config.image_path,
-        config.side,
-        target_image_path=result.homography.warp_path,
-    )
+    generated_sam_boundary = _ensure_sam_boundary_from_warp(config.image_path, config.side, result.homography.warp_path)
+    sam_boundary = _sam_boundary_meta_from_payload(generated_sam_boundary)
+    if sam_boundary is None and not _sam_boundary_autogen_enabled():
+        sam_boundary = _latest_sam_boundary_meta(
+            config.image_path,
+            config.side,
+            target_image_path=result.homography.warp_path,
+        )
     recovery_bounds_y = None
     if sam_boundary is not None:
         bounds_y = sam_boundary.get("bounds_y")
         if isinstance(bounds_y, list) and len(bounds_y) >= 2:
             recovery_bounds_y = (float(bounds_y[0]), float(bounds_y[1]))
+    spacing_stats = spacing_stats_for_side(config.side)
 
     yolo_result: PipeEndInferenceResult | None = None
     detection_source = "notebook_style_sobel_x_roi"
     if _pipe_end_yolo_enabled():
-        yolo_result = _apply_pipe_end_yolo_detection(result, output_dir, recovery_bounds_y=recovery_bounds_y)
+        yolo_result = _apply_pipe_end_yolo_detection(
+            result,
+            output_dir,
+            side=config.side,
+            recovery_bounds_y=recovery_bounds_y,
+            spacing_stats=spacing_stats,
+        )
         detection_source = "yolo_pipe_end"
 
     tube_measurements = build_tube_measurements(result)

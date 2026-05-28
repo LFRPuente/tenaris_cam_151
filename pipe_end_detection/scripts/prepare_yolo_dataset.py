@@ -168,6 +168,7 @@ def split_samples(
 
 
 def write_yaml(output_root: Path) -> None:
+    dataset_base = output_root.parent.resolve().as_posix()
     yaml_path = output_root.parent / "data.yaml"
     try:
         dataset_base = output_root.parent.resolve().relative_to(Path.cwd().resolve()).as_posix()

@@ -170,13 +170,15 @@ def _run_state_from_manifest(manifest: dict[str, Any] | None, *, latest_run_id: 
 def _history_entry_from_manifest(manifest: dict[str, Any], *, latest_run_id: str | None = None) -> dict[str, Any]:
     run_state = _run_state_from_manifest(manifest, latest_run_id=latest_run_id) or {}
     processing = dict(manifest.get("processing") or {})
-    can_open = _resolve_existing_path(processing.get("match_latest_json_path") or processing.get("match_json_path")) is not None
+    match_path = _resolve_existing_path(processing.get("match_latest_json_path") or processing.get("match_json_path"))
+    can_open = match_path is not None
     captured_at = str(manifest.get("captured_at") or "")
     return {
         **run_state,
         "can_open": bool(can_open),
         "captured_date": captured_at[:10] if captured_at else "",
         "run_url": f"/?run_id={run_state.get('run_id')}" if can_open and run_state.get("run_id") else None,
+        "uses_sam_boundary": _match_source_uses_sam_boundary(match_path),
     }
 
 
@@ -195,6 +197,8 @@ def _history_entry_from_legacy_match(path: Path) -> dict[str, Any] | None:
     if path.name.lower() == "tube_match_latest.json":
         return None
     payload = _load_match_result(path)
+    if not _match_payload_uses_sam_boundary(payload):
+        return None
     summary = dict(payload.get("summary") or {})
     inputs = dict(payload.get("inputs") or {})
     generated_at = str(payload.get("generated_at") or "")
@@ -217,6 +221,7 @@ def _history_entry_from_legacy_match(path: Path) -> dict[str, Any] | None:
         "captured_date": generated_at[:10] if generated_at else "",
         "run_url": f"/?artifact={artifact_name}",
         "artifact_name": artifact_name,
+        "uses_sam_boundary": True,
     }
 
 
@@ -291,6 +296,47 @@ def _load_match_result(source: str | Path | dict[str, Any]) -> dict[str, Any]:
         raise ValueError("El resultado de matching no contiene rows.")
     payload["version"] = int(payload.get("version") or MATCH_RESULT_VERSION)
     return payload
+
+
+def _dataset_has_sam_boundary(dataset_path: Path | None, side: str) -> bool:
+    if dataset_path is None:
+        return False
+    try:
+        dataset = _load_dataset(dataset_path, expected_side=_normalize_side(side))
+    except Exception:
+        return False
+    extra_meta = dataset.get("extra_meta")
+    if not isinstance(extra_meta, dict):
+        return False
+    return isinstance(extra_meta.get("sam_boundary"), dict) or bool(extra_meta.get("sam_boundary_bounds_y"))
+
+
+def _match_payload_uses_sam_boundary(match_payload: dict[str, Any]) -> bool:
+    strategy = str(match_payload.get("matching_strategy") or "").lower()
+    if "sam" in strategy:
+        return True
+    inputs = match_payload.get("inputs")
+    if not isinstance(inputs, dict):
+        return False
+    for side in ("151", "152"):
+        side_info = inputs.get(f"cam{side}")
+        if not isinstance(side_info, dict):
+            continue
+        raw_input_path = str(side_info.get("input_path") or "")
+        if Path(raw_input_path).name.lower() == f"cam{side}_tube_measurements_latest.json":
+            continue
+        if _dataset_has_sam_boundary(_resolve_existing_path(raw_input_path), side):
+            return True
+    return False
+
+
+def _match_source_uses_sam_boundary(source: Path | None) -> bool:
+    if source is None:
+        return False
+    try:
+        return _match_payload_uses_sam_boundary(_load_match_result(source))
+    except Exception:
+        return False
 
 
 def _resolve_dataset_from_match(
@@ -416,11 +462,49 @@ def _project_warp_point_to_raw(
         return None
     x_raw = float(projected[0, 0, 0])
     y_raw = float(projected[0, 0, 1])
-    if mirror_in_backend:
-        x_raw = float(raw_width - 1) - x_raw
+    # The inverse transform already lands in the coordinate space of the RAW image
+    # served to the viewer. Applying the cam152 backend mirror again shifts points
+    # to the wrong side of the bundle.
     x_raw = max(0.0, min(float(raw_width - 1), x_raw))
     y_raw = max(0.0, min(float(raw_height - 1), y_raw))
     return x_raw, y_raw
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _measurement_point(measurement: dict[str, Any], key: str) -> tuple[float, float] | None:
+    value = measurement.get(key)
+    if isinstance(value, dict):
+        x_value = _float_or_none(value.get("x"))
+        y_value = _float_or_none(value.get("y"))
+    elif isinstance(value, (list, tuple)) and len(value) >= 2:
+        x_value = _float_or_none(value[0])
+        y_value = _float_or_none(value[1])
+    else:
+        return None
+    if x_value is None or y_value is None:
+        return None
+    return x_value, y_value
+
+
+def _measurement_box_center(measurement: dict[str, Any]) -> tuple[float, float] | None:
+    value = measurement.get("box_xyxy")
+    if not isinstance(value, (list, tuple)) or len(value) < 4:
+        return None
+    x1 = _float_or_none(value[0])
+    y1 = _float_or_none(value[1])
+    x2 = _float_or_none(value[2])
+    y2 = _float_or_none(value[3])
+    if x1 is None or y1 is None or x2 is None or y2 is None:
+        return None
+    return (x1 + x2) * 0.5, (y1 + y2) * 0.5
 
 
 def _marker_color_for_status(status: str) -> str:
@@ -524,28 +608,76 @@ def _build_side_markers(
         source_measurement = item.get("source_measurement")
         if not isinstance(source_measurement, dict):
             continue
-        x_value = None
-        for key in ("x_start_raw_warp", "x_start_warp", "x_start_smooth_warp", "ref_x"):
+        calc_x_value = None
+        for key in ("x_start_raw_warp", "x_start_warp", "x_start_smooth_warp"):
             raw_number = source_measurement.get(key)
             if raw_number is not None:
                 try:
-                    x_value = float(raw_number)
+                    calc_x_value = float(raw_number)
                     break
                 except (TypeError, ValueError):
                     continue
+        ref_x_value = None
+        try:
+            if source_measurement.get("ref_x") is not None:
+                ref_x_value = float(source_measurement.get("ref_x"))
+        except (TypeError, ValueError):
+            ref_x_value = None
         y_value = None
         try:
             if source_measurement.get("y_center_warp") is not None:
                 y_value = float(source_measurement.get("y_center_warp"))
         except (TypeError, ValueError):
             y_value = None
-        projected = _project_warp_point_to_raw(x_value, y_value, inverse_transform, raw_size, mirror_in_backend)
+        projected_calc = _project_warp_point_to_raw(calc_x_value, y_value, inverse_transform, raw_size, mirror_in_backend)
+        projected_ref = _project_warp_point_to_raw(ref_x_value, y_value, inverse_transform, raw_size, mirror_in_backend)
+        projected = projected_calc or projected_ref
         if projected is None:
+            continue
+        visual_source = "measurement"
+        visual_projected = None
+        for point_key in ("refined_pipe_end", "yolo_box_center"):
+            source_point = _measurement_point(source_measurement, point_key)
+            if source_point is None:
+                continue
+            visual_projected = _project_warp_point_to_raw(
+                source_point[0],
+                source_point[1],
+                inverse_transform,
+                raw_size,
+                mirror_in_backend,
+            )
+            if visual_projected is not None:
+                visual_source = point_key
+                break
+        if visual_projected is None:
+            box_center = _measurement_box_center(source_measurement)
+            if box_center is not None:
+                visual_projected = _project_warp_point_to_raw(
+                    box_center[0],
+                    box_center[1],
+                    inverse_transform,
+                    raw_size,
+                    mirror_in_backend,
+                )
+                if visual_projected is not None:
+                    visual_source = "box_xyxy_center"
+        if visual_projected is None:
+            # Legacy matcher exports do not include YOLO boxes. On cam152, the
+            # reference edge is the visible pipe-end anchor; cam151 keeps the
+            # measured x-start anchor.
+            if side_key == "152" and projected_ref is not None:
+                visual_projected = projected_ref
+                visual_source = "legacy_ref_fallback"
+            else:
+                visual_projected = projected_calc or projected_ref
+                visual_source = "legacy_calc_fallback" if projected_calc is not None else "legacy_ref_fallback"
+        if visual_projected is None:
             continue
         marker_style = _adaptive_marker_style(
             image_bgr,
-            projected[0],
-            projected[1],
+            visual_projected[0],
+            visual_projected[1],
             status=str(row.get("match_status") or ""),
         )
         markers.append(
@@ -553,8 +685,20 @@ def _build_side_markers(
                 "tube_number": int(row.get("tube_number") or len(markers) + 1),
                 "tube_idx": int(tube_idx),
                 "match_status": str(row.get("match_status") or ""),
-                "x": round(projected[0], 3),
-                "y": round(projected[1], 3),
+                "x": round(visual_projected[0], 3),
+                "y": round(visual_projected[1], 3),
+                "visual_x": round(visual_projected[0], 3),
+                "visual_y": round(visual_projected[1], 3),
+                "visual_source": visual_source,
+                "calc_x": None if projected_calc is None else round(projected_calc[0], 3),
+                "calc_y": None if projected_calc is None else round(projected_calc[1], 3),
+                "ref_x": None if projected_ref is None else round(projected_ref[0], 3),
+                "ref_y": None if projected_ref is None else round(projected_ref[1], 3),
+                "offset_px": (
+                    None
+                    if source_measurement.get("offset_px") is None
+                    else round(float(source_measurement.get("offset_px")), 3)
+                ),
                 "display_color": _marker_color_for_status(str(row.get("match_status") or "")),
                 "label_fill": str(marker_style.get("fill_color") or _marker_color_for_status(str(row.get("match_status") or ""))),
                 "label_fill_opacity": float(marker_style.get("fill_opacity") or 0.82),
@@ -942,8 +1086,13 @@ def start_sorting_table_mvp_server(
             current_match_source = _resolve_legacy_match_artifact(requested_artifact_name)
             current_run_state_override = _history_entry_from_legacy_match(Path(current_match_source))
         else:
-            current_match_source = match_source if match_source is not None else find_latest_match_result()
             current_run_manifest = latest_manifest
+            if match_source is not None:
+                current_match_source = match_source
+            elif current_run_manifest is not None:
+                current_match_source = _resolve_manifest_match_source(current_run_manifest)
+            else:
+                current_match_source = find_latest_match_result()
 
         match_payload = _load_match_result(current_match_source)
         left_dataset = _resolve_dataset_from_match(match_payload, "151", source_override=cam151_input)
@@ -1002,6 +1151,7 @@ def start_sorting_table_mvp_server(
         latest_run_id = str((latest_manifest or {}).get("run_id") or "").strip() or None
         entries = [_history_entry_from_manifest(manifest, latest_run_id=latest_run_id) for manifest in list_capture_run_manifests()]
         entries.extend(_list_legacy_history_entries())
+        entries = [entry for entry in entries if bool(entry.get("uses_sam_boundary"))]
         entries.sort(key=lambda item: str(item.get("captured_at") or item.get("run_id") or ""), reverse=True)
         return {
             "title": "Download History",

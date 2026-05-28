@@ -313,7 +313,7 @@ tbody tr.warn.selected td:first-child{
   fill:#11171f;
   font-size:10px;
   font-weight:800;
-  text-anchor:end;
+  text-anchor:middle;
   dominant-baseline:middle;
 }
 .synthetic-length{
@@ -328,8 +328,27 @@ tbody tr.warn.selected td:first-child{
 }
 .synthetic-axis{
   stroke:rgba(86,73,44,.32);
-  stroke-width:1;
-  stroke-dasharray:5 5;
+  stroke-width:4;
+  stroke-linecap:round;
+}
+.synthetic-reference-line{
+  stroke:#2a63a5;
+  stroke-width:4;
+  stroke-linecap:round;
+  stroke-dasharray:14 12;
+  opacity:.8;
+}
+.synthetic-guide-label{
+  fill:#0f724f;
+  font-size:22px;
+  font-weight:900;
+  letter-spacing:0;
+}
+.synthetic-ref-label{
+  fill:#2a63a5;
+  font-size:18px;
+  font-weight:800;
+  letter-spacing:0;
 }
 .synthetic-ref{
   fill:#4fb966;
@@ -450,11 +469,39 @@ body[data-view-mode="full"] .raw-legend{
   stroke-width:.95;
   opacity:.46;
 }
+.marker-measure{
+  stroke:#f8f0b4;
+  stroke-width:1.35;
+  stroke-dasharray:5 3;
+  opacity:.82;
+}
+.marker-ref-line{
+  stroke:#54d8ff;
+  stroke-width:1.05;
+  opacity:.82;
+}
+.marker-calc-line{
+  stroke:#ffd84e;
+  stroke-width:1.05;
+  opacity:.86;
+}
 .marker-dot{
   fill:#fff1a8;
   stroke:#17202d;
   stroke-width:.95;
   opacity:.9;
+}
+.marker-ref-dot{
+  fill:#54d8ff;
+  stroke:#062533;
+  stroke-width:.95;
+  opacity:.94;
+}
+.marker-calc-dot{
+  fill:#ffd84e;
+  stroke:#302309;
+  stroke-width:.95;
+  opacity:.96;
 }
 .marker-box{
   stroke:#f6fbff;
@@ -488,13 +535,22 @@ body[data-view-mode="full"] .raw-legend{
   opacity:.92;
 }
 .marker.active .marker-line,
+.marker.active .marker-measure,
+.marker.active .marker-ref-line,
+.marker.active .marker-calc-line,
 .marker.active .marker-box,
-.marker.active .marker-dot{
+.marker.active .marker-dot,
+.marker.active .marker-ref-dot,
+.marker.active .marker-calc-dot{
   filter:drop-shadow(0 0 4px rgba(255,255,255,.52));
 }
 .marker.active .marker-line{
   stroke-width:2.15;
   opacity:.96;
+}
+.marker.active .marker-measure{
+  stroke-width:2.2;
+  opacity:.98;
 }
 .marker.active .marker-box{
   stroke:#ffffff;
@@ -762,7 +818,7 @@ function rows(){
       const tubeNumber = Number(row.tube_number);
       return Number.isFinite(tubeNumber) && tubeNumber >= 1 && tubeNumber <= DISPLAY_PIPE_LIMIT;
     })
-    .sort((a, b) => Number(b.tube_number) - Number(a.tube_number));
+    .sort((a, b) => Number(a.tube_number) - Number(b.tube_number));
 }
 
 function visibleSummary(){
@@ -910,7 +966,7 @@ function renderTable(){
 
 function renderSyntheticDiagram(){
   const data = rows()
-    .sort((a, b) => Number(b.tube_number) - Number(a.tube_number));
+    .sort((a, b) => Number(a.tube_number) - Number(b.tube_number));
   if(!els.syntheticSvg || !els.syntheticEmpty) return;
   if(!data.length){
     els.syntheticSvg.innerHTML = "";
@@ -920,15 +976,17 @@ function renderSyntheticDiagram(){
   }
   els.syntheticEmpty.hidden = true;
   const width = 1500;
-  const rowGap = 64;
-  const topPad = 58;
-  const bottomPad = 74;
-  const pipeH = 44;
-  const leftX = 112;
-  const rightPad = 76;
-  const referenceLengthIn = 500;
-  const referencePipeW = width - leftX - rightPad;
-  const height = topPad + (data.length * rowGap) + bottomPad;
+  const height = 430;
+  const leftX = 132;
+  const rightPad = 100;
+  const topPad = 42;
+  const frontY = 318;
+  const referenceY = frontY + 28;
+  const pieceW = 52;
+  const minPieceH = 150;
+  const maxPieceH = 230;
+  const usableW = width - leftX - rightPad;
+  const step = data.length > 1 ? usableW / (data.length - 1) : 0;
   const lengths = data.map((row) => Number(row.length_in)).filter((value) => Number.isFinite(value));
   const minLength = lengths.length ? Math.min(...lengths) : 0;
   const maxLength = lengths.length ? Math.max(...lengths) : 0;
@@ -943,33 +1001,33 @@ function renderSyntheticDiagram(){
   }
   const pipeNodes = data.map((row, idx) => {
     const length = Number(row.length_in);
-    const lengthRatio = Number.isFinite(length) ? Math.max(0.15, Math.min(1.05, length / referenceLengthIn)) : 0.96;
-    const pipeW = Math.round(referencePipeW * Math.min(1, lengthRatio));
-    const y = topPad + idx * rowGap;
+    const normalized = lengths.length && maxLength > minLength && Number.isFinite(length)
+      ? (length - minLength) / (maxLength - minLength)
+      : 0.58;
+    const pieceH = Math.round(minPieceH + normalized * (maxPieceH - minPieceH));
+    const x = Math.round(leftX + (idx * step) - (pieceW / 2));
+    const y = Math.max(topPad, frontY - pieceH);
     const tubeNumber = Number(row.tube_number);
     const selectedClass = tubeNumber === selected ? " selected" : "";
     const warnClass = isWarningStatus(row.match_status) ? " warn" : "";
     const rowLabel = escapeHtml(row.length_ft_display || row.length_in_display || "-");
-    const rightX = leftX + pipeW;
-    const capR = pipeH / 2;
-    const highlightY = y + 4;
-    const highlightH = Math.max(3, pipeH * 0.24);
-    const midlineY = y + Math.round(pipeH * 0.42);
-    const shadowY = y + pipeH - Math.max(4, pipeH * 0.22);
-    const shadowH = Math.max(3, pipeH * 0.18);
+    const capR = pieceW / 2;
+    const highlightX = x + 9;
+    const highlightW = 4;
+    const shadowX = x + pieceW - 11;
+    const shadowW = 5;
+    const labelY = Math.max(22, y - 12);
     const colors = pipeColor(row);
     return `
       <g class="synthetic-pipe${selectedClass}${warnClass}" data-synthetic-tube="${tubeNumber}" style="--pipe-fill:${colors.body};--cap-fill:${colors.cap}">
         <title>Pipe #${tubeNumber} | ${rowLabel}</title>
-        <text class="synthetic-label" x="${leftX - 16}" y="${y + capR}" fill="${colors.text}">${tubeNumber}</text>
-        <rect class="synthetic-body" x="${leftX}" y="${y}" width="${pipeW}" height="${pipeH}" rx="${capR}" ry="${capR}"></rect>
-        <rect class="synthetic-highlight" x="${leftX + capR * 0.55}" y="${highlightY}" width="${Math.max(0, pipeW - capR * 1.1)}" height="${highlightH}" rx="${highlightH / 2}" ry="${highlightH / 2}"></rect>
-        <rect class="synthetic-midline" x="${leftX + capR * 0.35}" y="${midlineY}" width="${Math.max(0, pipeW - capR * 0.7)}" height="2" rx="1" ry="1"></rect>
-        <rect class="synthetic-shadowline" x="${leftX + capR * 0.55}" y="${shadowY}" width="${Math.max(0, pipeW - capR * 1.1)}" height="${shadowH}" rx="${shadowH / 2}" ry="${shadowH / 2}"></rect>
-        <ellipse class="synthetic-cap" cx="${rightX}" cy="${y + capR}" rx="${capR + 1}" ry="${capR}"></ellipse>
-        <ellipse class="synthetic-cap-shine" cx="${rightX - capR * 0.28}" cy="${y + capR * 0.62}" rx="${capR * 0.42}" ry="${capR * 0.24}"></ellipse>
-        <circle class="synthetic-ref" cx="${leftX}" cy="${y + capR}" r="3.6"></circle>
-        <text class="synthetic-length" x="${leftX + pipeW / 2}" y="${y + capR}" fill="${colors.lengthText}" stroke="${colors.stroke}">${rowLabel}</text>
+        <text class="synthetic-label" x="${x + pieceW / 2}" y="${labelY}" fill="${colors.text}" text-anchor="middle">${tubeNumber}</text>
+        <rect class="synthetic-body" x="${x}" y="${y}" width="${pieceW}" height="${pieceH}" rx="${capR * 0.42}" ry="${capR * 0.42}"></rect>
+        <rect class="synthetic-highlight" x="${highlightX}" y="${y + 12}" width="${highlightW}" height="${Math.max(0, pieceH - 24)}" rx="2" ry="2"></rect>
+        <rect class="synthetic-midline" x="${x + 6}" y="${frontY - 4}" width="${pieceW - 12}" height="2" rx="1" ry="1"></rect>
+        <rect class="synthetic-shadowline" x="${shadowX}" y="${y + 10}" width="${shadowW}" height="${Math.max(0, pieceH - 20)}" rx="2.5" ry="2.5"></rect>
+        <circle class="synthetic-ref" cx="${x + pieceW / 2}" cy="${frontY}" r="3.6"></circle>
+        <text class="synthetic-length" x="${x + pieceW / 2}" y="${frontY + 48}" fill="${colors.lengthText}" stroke="${colors.stroke}">${rowLabel}</text>
       </g>
     `;
   }).join("");
@@ -978,11 +1036,14 @@ function renderSyntheticDiagram(){
   els.syntheticSvg.setAttribute("height", String(height));
   els.syntheticSvg.innerHTML = `
     <defs>
-      <filter id="pipeShadow" x="-5%" y="-80%" width="115%" height="260%">
+      <filter id="pipeShadow" x="-30%" y="-20%" width="170%" height="150%">
         <feDropShadow dx="0" dy="2" stdDeviation="1.6" flood-color="#2c2415" flood-opacity=".22"></feDropShadow>
       </filter>
     </defs>
-    <line class="synthetic-axis" x1="${leftX}" y1="26" x2="${leftX}" y2="${height - 26}"></line>
+    <line class="synthetic-axis" x1="${leftX - 56}" y1="${frontY}" x2="${width - rightPad + 44}" y2="${frontY}"></line>
+    <line class="synthetic-reference-line" x1="${leftX - 56}" y1="${referenceY}" x2="${width - rightPad + 44}" y2="${referenceY}"></line>
+    <text class="synthetic-guide-label" x="${leftX - 30}" y="${frontY - 16}">Sobel Y = piece front</text>
+    <text class="synthetic-ref-label" x="${leftX - 30}" y="${referenceY - 10}">Reference</text>
     ${pipeNodes}
   `;
   for(const node of els.syntheticSvg.querySelectorAll("[data-synthetic-tube]")){
@@ -1234,19 +1295,60 @@ function renderViewer(sideKey){
     group.setAttribute("class", `marker ${selected ? "active" : ""}`);
     group.style.cursor = "pointer";
     group.addEventListener("click", () => setSelectedTube(Number(marker.tube_number)));
+    const visualX = Number(marker.visual_x ?? marker.x ?? marker.calc_x);
+    const visualY = Number(marker.visual_y ?? marker.y ?? marker.calc_y);
+    const markerX = Number.isFinite(visualX) ? visualX : Number(marker.x);
+    const markerY = Number.isFinite(visualY) ? visualY : Number(marker.y);
+    const refX = Number(marker.ref_x);
+    const refY = Number(marker.ref_y);
+    const hasRef = Number.isFinite(refX) && Number.isFinite(refY);
+    const hasCalc = Number.isFinite(markerX) && Number.isFinite(markerY);
+
+    if(hasRef && hasCalc){
+      const measure = document.createElementNS(SVG_NS, "line");
+      measure.setAttribute("class", "marker-measure");
+      measure.setAttribute("x1", String(refX));
+      measure.setAttribute("y1", String(refY));
+      measure.setAttribute("x2", String(markerX));
+      measure.setAttribute("y2", String(markerY));
+      group.appendChild(measure);
+
+      const refLine = document.createElementNS(SVG_NS, "line");
+      refLine.setAttribute("class", "marker-ref-line");
+      refLine.setAttribute("x1", String(refX));
+      refLine.setAttribute("y1", String(refY - 10));
+      refLine.setAttribute("x2", String(refX));
+      refLine.setAttribute("y2", String(refY + 10));
+      group.appendChild(refLine);
+
+      const calcLine = document.createElementNS(SVG_NS, "line");
+      calcLine.setAttribute("class", "marker-calc-line");
+      calcLine.setAttribute("x1", String(markerX));
+      calcLine.setAttribute("y1", String(markerY - 10));
+      calcLine.setAttribute("x2", String(markerX));
+      calcLine.setAttribute("y2", String(markerY + 10));
+      group.appendChild(calcLine);
+
+      const refDot = document.createElementNS(SVG_NS, "circle");
+      refDot.setAttribute("class", "marker-ref-dot");
+      refDot.setAttribute("cx", String(refX));
+      refDot.setAttribute("cy", String(refY));
+      refDot.setAttribute("r", selected ? "4.2" : "3.2");
+      group.appendChild(refDot);
+    }
 
     const line = document.createElementNS(SVG_NS, "line");
     line.setAttribute("class", "marker-line");
-    line.setAttribute("x1", String(marker.x));
-    line.setAttribute("y1", String(marker.y));
+    line.setAttribute("x1", String(markerX));
+    line.setAttribute("y1", String(markerY));
     line.setAttribute("x2", String(marker.anchorX));
     line.setAttribute("y2", String(marker.labelY));
     group.appendChild(line);
 
     const dot = document.createElementNS(SVG_NS, "circle");
-    dot.setAttribute("class", "marker-dot");
-    dot.setAttribute("cx", String(marker.x));
-    dot.setAttribute("cy", String(marker.y));
+    dot.setAttribute("class", hasRef ? "marker-calc-dot" : "marker-dot");
+    dot.setAttribute("cx", String(markerX));
+    dot.setAttribute("cy", String(markerY));
     dot.setAttribute("r", "6");
     group.appendChild(dot);
 
@@ -1272,9 +1374,9 @@ function renderViewer(sideKey){
 
     const small = document.createElementNS(SVG_NS, "text");
     small.setAttribute("class", "marker-small");
-    small.setAttribute("x", String(marker.x));
-    small.setAttribute("y", String(marker.y - 12));
-    small.textContent = `T${marker.tube_idx}`;
+    small.setAttribute("x", String(markerX));
+    small.setAttribute("y", String(markerY - 12));
+    small.textContent = hasRef ? `T${marker.tube_idx} ref/end` : `T${marker.tube_idx}`;
     group.appendChild(small);
 
     if(selected){

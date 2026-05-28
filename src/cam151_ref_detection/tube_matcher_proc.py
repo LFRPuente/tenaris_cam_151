@@ -831,12 +831,37 @@ def _select_match_rows(
             left_slots_override=left_bundle_slots,
             right_slots_override=right_bundle_slots,
         )
+        order_rows = _build_order_match_rows(left_items, right_items)
+        left_count = len(_ordered_active_items(left_items))
+        right_count = len(_ordered_active_items(right_items))
+        count_ratio = (min(left_count, right_count) / max(left_count, right_count)) if max(left_count, right_count) else 0.0
+        bundle_matched = _matched_count(bundle_rows)
+        order_matched = _matched_count(order_rows)
+        if (
+            _dataset_uses_yolo(left_dataset, left_items)
+            and _dataset_uses_yolo(right_dataset, right_items)
+            and min(left_count, right_count) >= 8
+            and count_ratio >= 0.70
+            and order_matched > bundle_matched
+        ):
+            return (
+                order_rows,
+                "yolo_vertical_order_balanced_with_sam_bundle_bounds",
+                {
+                    "cam152_slot_offset": int(right_bundle_offset),
+                    "bundle_matched": int(bundle_matched),
+                    "order_matched": int(order_matched),
+                    "count_ratio": float(count_ratio),
+                    "cam151_bundle": left_bundle_debug,
+                    "cam152_bundle": right_bundle_debug,
+                },
+            )
         return (
             bundle_rows,
             "sam_bundle_normalized_vertical_slots",
             {
                 "cam152_slot_offset": int(right_bundle_offset),
-                "matched": int(_matched_count(bundle_rows)),
+                "matched": int(bundle_matched),
                 "cam151_bundle": left_bundle_debug,
                 "cam152_bundle": right_bundle_debug,
             },

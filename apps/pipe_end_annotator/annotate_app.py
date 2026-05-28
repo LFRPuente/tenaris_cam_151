@@ -325,76 +325,13 @@ def _image_path_for_label_stem(paths: AppPaths, rel_stem: Path) -> Path | None:
 def _task_pipe_end_spacing_stats(paths: AppPaths, task: AnnotationTask) -> dict | None:
     if not task.use_pipe_end_inference:
         return None
-    label_files = [
-        path
-        for path in task.labels_root.rglob("*.txt")
-        if path.is_file()
-        and (
-            not task.camera_filter
-            or (
-                (rel := path.relative_to(task.labels_root).with_suffix("")).parts
-                and rel.parts[0] == task.camera_filter
-            )
-        )
-    ]
-    if not label_files:
-        return None
-    latest_mtime = max(path.stat().st_mtime_ns for path in label_files)
-    cache_key = (task.key, task.camera_filter or "", len(label_files), int(latest_mtime))
-    if cache_key in SPACING_STATS_CACHE:
-        return SPACING_STATS_CACHE[cache_key]
+    from src.pipe_end_yolo.annotation_context import spacing_stats_from_annotations
 
-    spacings: list[float] = []
-    sample_count = 0
-    for label_path in label_files:
-        rel_stem = label_path.relative_to(task.labels_root).with_suffix("")
-        image_path = _image_path_for_label_stem(paths, rel_stem)
-        if image_path is None:
-            continue
-        try:
-            width, height = image_size(image_path)
-            boxes = yolo_to_boxes(label_path, width, height)
-        except Exception:
-            continue
-        if len(boxes) < 2:
-            continue
-        ys = sorted(float(box.get("y", 0.0)) + 0.5 * float(box.get("h", 0.0)) for box in boxes)
-        gaps = [ys[idx + 1] - ys[idx] for idx in range(len(ys) - 1) if ys[idx + 1] > ys[idx]]
-        if gaps:
-            sample_count += 1
-            spacings.extend(gaps)
-
-    raw_median = _median_float(spacings)
-    if raw_median is None or len(spacings) < 10:
-        SPACING_STATS_CACHE[cache_key] = None
-        return None
-
-    central = [gap for gap in spacings if 0.35 * raw_median <= gap <= 2.50 * raw_median]
-    median_gap = _median_float(central) or raw_median
-    mean_gap, variance_gap = _mean_variance(central)
-    deviations = [abs(gap - median_gap) for gap in central]
-    mad = _median_float(deviations) or 0.0
-    robust_sigma = 1.4826 * float(mad)
-    std_gap = float(variance_gap) ** 0.5
-    allowed_gap = max(1.65 * float(median_gap), float(median_gap) + 4.0 * robust_sigma)
-    if std_gap > 0:
-        allowed_gap = max(allowed_gap, float(mean_gap) + 2.0 * std_gap)
-    allowed_gap = min(allowed_gap, 3.0 * float(median_gap))
-
-    stats = {
-        "source": "annotation_spacing",
-        "sample_image_count": int(sample_count),
-        "spacing_count": int(len(central)),
-        "raw_spacing_count": int(len(spacings)),
-        "median_gap_px": float(median_gap),
-        "mean_gap_px": float(mean_gap),
-        "variance_gap_px": float(variance_gap),
-        "std_gap_px": float(std_gap),
-        "mad_gap_px": float(mad),
-        "allowed_gap_px": float(allowed_gap),
-    }
-    SPACING_STATS_CACHE[cache_key] = stats
-    return stats
+    return spacing_stats_from_annotations(
+        images_root=paths.images_root,
+        labels_root=task.labels_root,
+        camera_filter=task.camera_filter,
+    )
 
 
 def image_size(path: Path) -> tuple[int, int]:
