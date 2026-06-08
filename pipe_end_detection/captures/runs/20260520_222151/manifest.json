@@ -1,0 +1,172 @@
+{
+  "version": 1,
+  "run_id": "20260520_222151",
+  "captured_at": "2026-05-20T22:21:51-06:00",
+  "status": "ready_for_annotation",
+  "purpose": "pipe_end_yolo_annotation",
+  "run_dir": "pipe_end_detection/captures/runs/20260520_222151",
+  "raw_dir": "pipe_end_detection/captures/runs/20260520_222151/raw",
+  "warp_dir": "pipe_end_detection/captures/runs/20260520_222151/warped",
+  "overlay_dir": "pipe_end_detection/captures/runs/20260520_222151/overlays",
+  "annotation_root": "pipe_end_detection/annotation_pool",
+  "config_path": "C:\\Users\\luis_\\Downloads\\descarga_imagenes\\config.json",
+  "dataset_capture_overrides": {
+    "stamp_download_time": false,
+    "camera_overlay": false
+  },
+  "roi_paths": {
+    "cam151": "manual_rois/_current_defaults/cam_151_current_default_rois.toml",
+    "cam152": "manual_rois/_current_defaults/cam_152_current_default_rois.toml"
+  },
+  "cameras": {
+    "cam151": {
+      "side": "151",
+      "camera_name": "cam151",
+      "ip": "10.3.2.151",
+      "image_name": "cam_151_20260520_222151.jpg",
+      "image_path": "pipe_end_detection/captures/runs/20260520_222151/raw/cam_151_20260520_222151.jpg",
+      "captured_at": "2026-05-20T22:22:03-06:00",
+      "snapshot": {
+        "resolution": "2048x1536",
+        "compression": 0,
+        "camera_id": 1
+      },
+      "ptz": {
+        "zoom": 0,
+        "pan": 0,
+        "tilt": 1.57,
+        "speed": 10,
+        "movement_sequence": "zoom_then_pan_tilt",
+        "actual": {
+          "pan": 0.0,
+          "tilt": 0.0,
+          "zoom": 1.0
+        },
+        "reached_target": false
+      },
+      "disable_overlay": true,
+      "stamp_download_time": false
+    },
+    "cam152": {
+      "side": "152",
+      "camera_name": "cam152",
+      "ip": "10.3.2.152",
+      "image_name": "cam_152_20260520_222151.jpg",
+      "image_path": "pipe_end_detection/captures/runs/20260520_222151/raw/cam_152_20260520_222151.jpg",
+      "captured_at": "2026-05-20T22:22:25-06:00",
+      "snapshot": {
+        "resolution": "2048x1536",
+        "compression": 0,
+        "camera_id": 1
+      },
+      "ptz": {
+        "zoom": 0,
+        "pan": 0,
+        "tilt": 0,
+        "speed": 10,
+        "movement_sequence": "zoom_then_pan_tilt",
+        "actual": {
+          "pan": 0.0,
+          "tilt": 0.0,
+          "zoom": 1.0
+        },
+        "reached_target": true
+      },
+      "disable_overlay": true,
+      "stamp_download_time": false
+    }
+  },
+  "homography": {
+    "cam151": {
+      "side": "151",
+      "roi_path": "manual_rois/_current_defaults/cam_151_current_default_rois.toml",
+      "warp_path": "pipe_end_detection/captures/runs/20260520_222151/warped/cam_151_20260520_222151_warp.jpg",
+      "overlay_path": "pipe_end_detection/captures/runs/20260520_222151/overlays/cam_151_20260520_222151_homography_overlay.jpg",
+      "source_image_path": "pipe_end_detection/captures/runs/20260520_222151/raw/cam_151_20260520_222151.jpg",
+      "output_size": {
+        "width": 1186,
+        "height": 1502
+      },
+      "source_size": {
+        "width": 2048,
+        "height": 1536
+      },
+      "src_points": [
+        [
+          976.490478515625,
+          73.51973724365234
+        ],
+        [
+          1391.73486328125,
+          64.54080200195312
+        ],
+        [
+          722.033447265625,
+          1619.6302490234375
+        ],
+        [
+          2044.3284912109375,
+          1620.1326904296875
+        ]
+      ],
+      "dst_rect": [
+        -63.667,
+        -126.088,
+        1122.737,
+        1375.56
+      ],
+      "mirror_rule": "none"
+    },
+    "cam152": {
+      "side": "152",
+      "roi_path": "manual_rois/_current_defaults/cam_152_current_default_rois.toml",
+      "warp_path": "pipe_end_detection/captures/runs/20260520_222151/warped/cam_152_20260520_222151_warp.jpg",
+      "overlay_path": "pipe_end_detection/captures/runs/20260520_222151/overlays/cam_152_20260520_222151_homography_overlay.jpg",
+      "source_image_path": "pipe_end_detection/captures/runs/20260520_222151/raw/cam_152_20260520_222151.jpg",
+      "output_size": {
+        "width": 667,
+        "height": 1212
+      },
+      "source_size": {
+        "width": 2048,
+        "height": 1536
+      },
+      "src_points": [
+        [
+          1084.9674072265625,
+          373.73388671875
+        ],
+        [
+          771.73828125,
+          364.5555725097656
+        ],
+        [
+          1195.30419921875,
+          1487.105224609375
+        ],
+        [
+          512.1341552734375,
+          1474.4241943359375
+        ]
+      ],
+      "dst_rect": [
+        732.283,
+        -8.046,
+        1399.563,
+        1204.287
+      ],
+      "mirror_rule": "cam152_backend_mirror"
+    }
+  },
+  "annotation_pool": {
+    "cam151": {
+      "image_path": "pipe_end_detection/annotation_pool/images/cam151/cam151_20260520_222151.jpg",
+      "label_path": "pipe_end_detection/annotation_pool/labels/cam151/cam151_20260520_222151.txt"
+    },
+    "cam152": {
+      "image_path": "pipe_end_detection/annotation_pool/images/cam152/cam152_20260520_222151.jpg",
+      "label_path": "pipe_end_detection/annotation_pool/labels/cam152/cam152_20260520_222151.txt"
+    }
+  },
+  "error": null
+}

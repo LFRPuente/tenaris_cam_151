@@ -3,7 +3,6 @@ config.json
 artifacts/
 .venv/
 .logs/
-pipe_end_detection/captures/
 pipe_end_detection/dataset/
 pipe_end_detection/logs/
 pipe_end_detection/__pycache__/
@@ -16,6 +15,11 @@ active_training_*/
 **/active_training/
 **/active_training_*/
 **/runs/
+!pipe_end_detection/captures/
+!pipe_end_detection/captures/runs/
+!pipe_end_detection/captures/runs/**
+pipe_end_detection/captures/runs/**/_homography_work/
+pipe_end_detection/captures/runs/**/_homography_work/**
 **/predictions/
 **/debug_predict*/
 **/sam2_probe/

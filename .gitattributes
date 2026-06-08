@@ -1,4 +1,7 @@
 pipe_end_detection/annotation_pool/images/**/*.jpg filter=lfs diff=lfs merge=lfs -text
 pipe_end_detection/annotation_pool/images/**/*.jpeg filter=lfs diff=lfs merge=lfs -text
 pipe_end_detection/annotation_pool/images/**/*.png filter=lfs diff=lfs merge=lfs -text
+pipe_end_detection/captures/runs/**/*.jpg filter=lfs diff=lfs merge=lfs -text
+pipe_end_detection/captures/runs/**/*.jpeg filter=lfs diff=lfs merge=lfs -text
+pipe_end_detection/captures/runs/**/*.png filter=lfs diff=lfs merge=lfs -text
 *.pt filter=lfs diff=lfs merge=lfs -text

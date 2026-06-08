@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "run_id": "20260502_031220",
+  "captured_at": "2026-05-02T03:12:20-06:00",
+  "status": "failed",
+  "purpose": "pipe_end_yolo_annotation",
+  "run_dir": "pipe_end_detection/captures/runs/20260502_031220",
+  "raw_dir": "pipe_end_detection/captures/runs/20260502_031220/raw",
+  "warp_dir": "pipe_end_detection/captures/runs/20260502_031220/warped",
+  "overlay_dir": "pipe_end_detection/captures/runs/20260502_031220/overlays",
+  "annotation_root": "pipe_end_detection/annotation_pool",
+  "config_path": "C:\\Users\\luis_\\Downloads\\descarga_imagenes\\config.json",
+  "dataset_capture_overrides": {
+    "stamp_download_time": false,
+    "camera_overlay": false
+  },
+  "roi_paths": {},
+  "cameras": {},
+  "homography": {},
+  "annotation_pool": {},
+  "error": "HTTPConnectionPool(host='10.3.2.151', port=80): Max retries exceeded with url: /axis-cgi/param.cgi (Caused by ConnectTimeoutError(<urllib3.connection.HTTPConnection object at 0x000001F90C1AF570>, 'Connection to 10.3.2.151 timed out. (connect timeout=15)'))"
+}
